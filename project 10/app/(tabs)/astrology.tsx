@@ -32,7 +32,7 @@ import { getAccessibleHoroscope, type HoroscopeData } from '../../utils/horoscop
 import {
   getHemisphereEvents,
   getCurrentPlanetaryPositionsEnhanced,
-  getVisibleConstellationsEnhanced, // ⬅️ added
+  getVisibleConstellationsEnhanced,
   getSpaceHighlights,
   type SpaceHighlights,
 } from '../../utils/astronomy';
@@ -80,7 +80,7 @@ export default function AstrologyScreen() {
   const [moonPhase, setMoonPhase] = useState<any>(null);
   const [astronomicalEvents, setAstronomicalEvents] = useState<any[]>([]);
   const [planetaryPositions, setPlanetaryPositions] = useState<any[]>([]);
-  const [visibleConstellations, setVisibleConstellations] = useState<string[]>([]); // ⬅️ added
+  const [visibleConstellations, setVisibleConstellations] = useState<string[]>([]);
   const [currentLanguage, setCurrentLanguage] = useState<SupportedLanguage>('en');
   const [translatedContent, setTranslatedContent] = useState<any>({});
   const [space, setSpace] = useState<SpaceHighlights | null>(null);
@@ -107,6 +107,17 @@ export default function AstrologyScreen() {
   const effectiveSign = useMemo(() => {
     return resolvedSign || selectedSign || '';
   }, [resolvedSign, selectedSign]);
+
+  // --- Hemisphere-safe filter: hide Southern-only landmarks on Northern ---
+  const filteredEvents = useMemo(() => {
+    const southernOnly = /(southern\s*cross|magellanic\s*clouds|carina\s*nebula)/i;
+    if (resolvedHemisphere === 'Northern') {
+      return (astronomicalEvents || []).filter(e =>
+        !southernOnly.test(`${e?.name || ''} ${e?.description || ''}`)
+      );
+    }
+    return astronomicalEvents || [];
+  }, [astronomicalEvents, resolvedHemisphere]);
 
   // Refetch when hemisphere changes
   useEffect(() => {
@@ -199,65 +210,55 @@ export default function AstrologyScreen() {
           | 'Northern'
           | 'Southern';
 
-        if (!cancelled) {
-          setSelectedSign(signResolved);
-          setSelectedHemisphere(hemiResolved);
-        }
+        setSelectedSign(signResolved);
+        setSelectedHemisphere(hemiResolved);
 
         if (!signResolved) {
-          if (!cancelled) {
-            setError('No cosmic profile found. Please calculate your cosmic position.');
-            setReady(true);
-          }
+          setError('No cosmic profile found. Please calculate your cosmic position.');
+          setReady(true);
           return;
         }
 
         // Load horoscope
         const data = await getAccessibleHoroscope(new Date(), signResolved, hemiResolved);
-        if (!cancelled) setHoroscope(data || null);
+        setHoroscope(data || null);
 
         // Astronomical context
         const lunar = getLunarNow(hemiResolved);
         const events = getHemisphereEvents(hemiResolved);
         const positions = await getCurrentPlanetaryPositionsEnhanced(hemiResolved);
-        if (!cancelled) {
-          setMoonPhase(lunar);
-          setAstronomicalEvents(events);
-          setPlanetaryPositions(positions);
-        }
+        setMoonPhase(lunar);
+        setAstronomicalEvents(events);
+        setPlanetaryPositions(positions);
 
-        // Constellations (by hemisphere) ⬅️ added
+        // Constellations (by hemisphere)
         try {
           const consts = await getVisibleConstellationsEnhanced(hemiResolved);
-          if (!cancelled) setVisibleConstellations(consts || []);
-        } catch (e) {
-          if (!cancelled) setVisibleConstellations([]);
+          setVisibleConstellations(consts || []);
+        } catch {
+          setVisibleConstellations([]);
         }
 
         // Space highlights (NASA / ASA) — safe if keys are missing
         try {
           const sh = await getSpaceHighlights();
-          if (!cancelled) setSpace(sh);
+          setSpace(sh);
         } catch (e) {
           console.warn('[astrology] space highlights error:', e);
         }
 
         // Language preference
         const language = await getUserLanguage();
-        if (!cancelled) setCurrentLanguage(language);
+        setCurrentLanguage(language);
 
         console.log('✅ [astrology] Init complete');
       } catch (err: any) {
         console.error('❌ [astrology] Init error:', err);
-        if (!cancelled) setError(err?.message || 'Failed to load horoscope.');
+        setError(err?.message || 'Failed to load horoscope.');
       } finally {
-        if (!cancelled) {
-          inFlight.current = false;
-          setLoading(false);
-          setReady(true);
-        } else {
-          inFlight.current = false;
-        }
+        inFlight.current = false;
+        setLoading(false);
+        setReady(true);
       }
     };
 
@@ -572,14 +573,14 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          {/* Astronomical Events */}
-          {astronomicalEvents.length > 0 && (
+          {/* Astronomical Events (hemisphere-safe) */}
+          {filteredEvents.length > 0 && (
             <LinearGradient colors={['rgba(139, 157, 195, 0.15)', 'rgba(139, 157, 195, 0.05)']} style={styles.eventsCard}>
               <View style={styles.cardHeader}>
                 <Telescope size={20} color="#8b9dc3" />
                 <Text style={styles.cardTitle}>Cosmic Events</Text>
               </View>
-              {astronomicalEvents.slice(0, 2).map((event, index) => (
+              {filteredEvents.slice(0, 2).map((event, index) => (
                 <View key={index} style={styles.eventItem}>
                   <Text style={styles.eventName}>{asString(event.name)}</Text>
                   <Text style={styles.eventDescription}>{asString(event.description)}</Text>
@@ -588,7 +589,7 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          {/* Visible Constellations ⬅️ NEW */}
+          {/* Visible Constellations */}
           {visibleConstellations.length > 0 && (
             <LinearGradient
               colors={['rgba(139, 157, 195, 0.18)', 'rgba(139, 157, 195, 0.06)']}
@@ -756,7 +757,7 @@ const styles = StyleSheet.create({
   houseDescription: { fontSize: 14, fontFamily: 'Vazirmatn-Regular', color: '#8b9dc3', lineHeight: 18 },
   housesNote: { fontSize: 12, fontFamily: 'Vazirmatn-Regular', color: '#8b9dc3', textAlign: 'center', marginTop: 12, fontStyle: 'italic' },
 
-  // Constellations styles ⬅️ NEW
+  // Constellations styles
   constellationsCard: {
     borderRadius: 16,
     padding: 20,
