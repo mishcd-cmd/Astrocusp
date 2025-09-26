@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Astro Cusp",
+    "slug": "astrocusp",
+    "version": "1.0.1",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/images/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "web": {
+      "favicon": "./assets/images/favicon.png",
+      "bundler": "metro",
+      "output": "static",
+      "build": {
+        "babel": {
+          "include": ["@expo/vector-icons"]
+        }
+      }
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "platforms": ["web"],
+    "scheme": "astrocusp"
+  }
+}

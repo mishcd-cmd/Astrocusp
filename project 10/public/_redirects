@@ -1,0 +1,14 @@
+# Domain redirects - apex to www
+http://astrocusp.com.au/*  https://www.astrocusp.com.au/:splat  301!
+https://astrocusp.com.au/* https://www.astrocusp.com.au/:splat  301!
+
+# Force HTTPS for all traffic
+http://www.astrocusp.com.au/* https://www.astrocusp.com.au/:splat 301!
+
+# Ensure JavaScript files are served with correct MIME type
+/_expo/static/js/* /_expo/static/js/:splat 200
+/_expo/static/css/* /_expo/static/css/:splat 200
+/assets/* /assets/:splat 200
+
+# SPA fallback for React Router - CRITICAL: preserve query strings for password reset
+/*  /index.html  200!
