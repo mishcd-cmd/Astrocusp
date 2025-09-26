@@ -6,7 +6,6 @@ import {
   StyleSheet,
   ScrollView,
   SafeAreaView,
-  TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
@@ -33,7 +32,7 @@ import { getAccessibleHoroscope, type HoroscopeData } from '../../utils/horoscop
 import {
   getHemisphereEvents,
   getCurrentPlanetaryPositionsEnhanced,
-  // ⬇️ Space highlights (NASA/ASA) — make sure utils/astronomy.ts exports these
+  getVisibleConstellationsEnhanced, // ⬅️ added
   getSpaceHighlights,
   type SpaceHighlights,
 } from '../../utils/astronomy';
@@ -58,7 +57,7 @@ function stripVersionSuffix(v?: string) {
 export default function AstrologyScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ sign?: string; hemisphere?: string }>();
-  const { hemisphere: contextHemisphere, setHemisphereSafe } = useHemisphere();
+  const { hemisphere: contextHemisphere } = useHemisphere();
 
   // ----- internal guards -----
   const initOnce = useRef(false);
@@ -81,9 +80,9 @@ export default function AstrologyScreen() {
   const [moonPhase, setMoonPhase] = useState<any>(null);
   const [astronomicalEvents, setAstronomicalEvents] = useState<any[]>([]);
   const [planetaryPositions, setPlanetaryPositions] = useState<any[]>([]);
+  const [visibleConstellations, setVisibleConstellations] = useState<string[]>([]); // ⬅️ added
   const [currentLanguage, setCurrentLanguage] = useState<SupportedLanguage>('en');
   const [translatedContent, setTranslatedContent] = useState<any>({});
-  // ⬇️ New: Space highlights
   const [space, setSpace] = useState<SpaceHighlights | null>(null);
 
   // Resolve header values (fast)
@@ -117,6 +116,13 @@ export default function AstrologyScreen() {
       try {
         const data = await getAccessibleHoroscope(new Date(), effectiveSign, resolvedHemisphere);
         if (!cancelled) setHoroscope(data || null);
+        // refresh constellations on hemisphere change
+        try {
+          const consts = await getVisibleConstellationsEnhanced(resolvedHemisphere);
+          if (!cancelled) setVisibleConstellations(consts || []);
+        } catch (e) {
+          if (!cancelled) setVisibleConstellations([]);
+        }
       } catch (err) {
         if (!cancelled) console.error('❌ [astrology] Hemisphere fetch error:', err);
       }
@@ -220,7 +226,15 @@ export default function AstrologyScreen() {
           setPlanetaryPositions(positions);
         }
 
-        // ⬇️ Space highlights (NASA / ASA) — safe if keys are missing
+        // Constellations (by hemisphere) ⬅️ added
+        try {
+          const consts = await getVisibleConstellationsEnhanced(hemiResolved);
+          if (!cancelled) setVisibleConstellations(consts || []);
+        } catch (e) {
+          if (!cancelled) setVisibleConstellations([]);
+        }
+
+        // Space highlights (NASA / ASA) — safe if keys are missing
         try {
           const sh = await getSpaceHighlights();
           if (!cancelled) setSpace(sh);
@@ -311,13 +325,15 @@ export default function AstrologyScreen() {
         const sub = await getSubscriptionStatus();
         setHasAccess(!!sub?.active);
       }
-      // ⬇️ also refresh Space Highlights
+      // refresh constellations + space
+      try {
+        const consts = await getVisibleConstellationsEnhanced(resolvedHemisphere);
+        setVisibleConstellations(consts || []);
+      } catch {}
       try {
         const sh = await getSpaceHighlights();
         setSpace(sh);
-      } catch (e) {
-        console.warn('[astrology] space highlights refresh error:', e);
-      }
+      } catch {}
     } catch (err: any) {
       setError(err?.message || 'Failed to refresh horoscope.');
     } finally {
@@ -572,7 +588,30 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          {/* ⬇️ Space Highlights (NASA / ASA) */}
+          {/* Visible Constellations ⬅️ NEW */}
+          {visibleConstellations.length > 0 && (
+            <LinearGradient
+              colors={['rgba(139, 157, 195, 0.18)', 'rgba(139, 157, 195, 0.06)']}
+              style={styles.constellationsCard}
+            >
+              <View style={styles.cardHeader}>
+                <Telescope size={20} color="#8b9dc3" />
+                <Text style={styles.cardTitle}>Visible Constellations</Text>
+              </View>
+              <View style={styles.constellationsWrap}>
+                {visibleConstellations.map((name) => (
+                  <View key={name} style={styles.constellationPill}>
+                    <Text style={styles.constellationText}>{name}</Text>
+                  </View>
+                ))}
+              </View>
+              <Text style={styles.constellationsNote}>
+                Based on the current season in the {resolvedHemisphere} Hemisphere
+              </Text>
+            </LinearGradient>
+          )}
+
+          {/* Space Highlights (NASA / ASA) */}
           {space && (space.nasa || space.asa) && (
             <LinearGradient
               colors={['rgba(139, 157, 195, 0.15)', 'rgba(139, 157, 195, 0.05)']}
@@ -717,7 +756,42 @@ const styles = StyleSheet.create({
   houseDescription: { fontSize: 14, fontFamily: 'Vazirmatn-Regular', color: '#8b9dc3', lineHeight: 18 },
   housesNote: { fontSize: 12, fontFamily: 'Vazirmatn-Regular', color: '#8b9dc3', textAlign: 'center', marginTop: 12, fontStyle: 'italic' },
 
-  // ⬇️ Space Highlights styles
+  // Constellations styles ⬅️ NEW
+  constellationsCard: {
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(139, 157, 195, 0.3)',
+  },
+  constellationsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  constellationPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(26, 26, 46, 0.5)',
+    borderWidth: 1,
+    borderColor: 'rgba(139, 157, 195, 0.3)',
+  },
+  constellationText: {
+    color: '#e8e8e8',
+    fontFamily: 'Vazirmatn-Medium',
+    fontSize: 14,
+  },
+  constellationsNote: {
+    fontSize: 12,
+    fontFamily: 'Inter-Regular',
+    color: '#8b9dc3',
+    textAlign: 'center',
+    marginTop: 12,
+    fontStyle: 'italic',
+  },
+
+  // Space Highlights styles
   spaceCard: {
     borderRadius: 16,
     padding: 20,
