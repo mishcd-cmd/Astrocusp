@@ -1,5 +1,5 @@
 // app/(tabs)/astrology.tsx
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   Star,
   Moon,
@@ -54,6 +55,25 @@ function stripVersionSuffix(v?: string) {
   return s.replace(/\s*V\d+\s*$/i, '').trim();
 }
 
+/* -------------------------
+ * Date helpers (fix stale daily content)
+ * ------------------------- */
+// Returns a Date set to **UTC midnight** for the user's **local** calendar day.
+// This makes Supabase lookups deterministic per local day, regardless of timezone.
+function getUTCMidnightForLocalDay(localNow = new Date()): Date {
+  const y = localNow.getFullYear();
+  const m = localNow.getMonth();
+  const d = localNow.getDate();
+  return new Date(Date.UTC(y, m, d, 0, 0, 0, 0));
+}
+
+// Milliseconds until next local midnight
+function msUntilNextLocalMidnight(now = new Date()): number {
+  const next = new Date(now);
+  next.setHours(24, 0, 0, 0);
+  return next.getTime() - now.getTime();
+}
+
 export default function AstrologyScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ sign?: string; hemisphere?: string }>();
@@ -85,6 +105,9 @@ export default function AstrologyScreen() {
   const [translatedContent, setTranslatedContent] = useState<any>({});
   const [space, setSpace] = useState<SpaceHighlights | null>(null);
 
+  // Tick that flips at local midnight to force refresh
+  const [dayTick, setDayTick] = useState(0);
+
   // Resolve header values (fast)
   const resolvedSign = useMemo(() => {
     if (params.sign) {
@@ -108,7 +131,14 @@ export default function AstrologyScreen() {
     return resolvedSign || selectedSign || '';
   }, [resolvedSign, selectedSign]);
 
-  // --- Hemisphere-safe filter: hide Southern-only landmarks on Northern ---
+  // The **service date** we send to Supabase (UTC midnight for today's local date)
+  const serviceDateUTC = useMemo(() => {
+    const d = getUTCMidnightForLocalDay();
+    console.log('📅 [astrology] serviceDateUTC →', d.toISOString());
+    return d;
+  }, [dayTick]);
+
+  // Hemisphere-safe filter: hide Southern-only landmarks on Northern
   const filteredEvents = useMemo(() => {
     const southernOnly = /(southern\s*cross|magellanic\s*clouds|carina\s*nebula)/i;
     if (resolvedHemisphere === 'Northern') {
@@ -125,13 +155,13 @@ export default function AstrologyScreen() {
     let cancelled = false;
     (async () => {
       try {
-        const data = await getAccessibleHoroscope(new Date(), effectiveSign, resolvedHemisphere);
+        const data = await getAccessibleHoroscope(serviceDateUTC, effectiveSign, resolvedHemisphere);
         if (!cancelled) setHoroscope(data || null);
         // refresh constellations on hemisphere change
         try {
           const consts = await getVisibleConstellationsEnhanced(resolvedHemisphere);
           if (!cancelled) setVisibleConstellations(consts || []);
-        } catch (e) {
+        } catch {
           if (!cancelled) setVisibleConstellations([]);
         }
       } catch (err) {
@@ -141,7 +171,23 @@ export default function AstrologyScreen() {
     return () => {
       cancelled = true;
     };
-  }, [effectiveSign, resolvedHemisphere, ready]);
+  }, [effectiveSign, resolvedHemisphere, ready, serviceDateUTC]);
+
+  // Auto flip dayTick at **local midnight** so content rolls to the new day
+  useEffect(() => {
+    const ms = msUntilNextLocalMidnight();
+    const t = setTimeout(() => setDayTick(tick => tick + 1), ms + 1000);
+    return () => clearTimeout(t);
+  }, [dayTick]);
+
+  // Also refetch when the screen regains focus (e.g. app slept overnight)
+  useFocusEffect(
+    useCallback(() => {
+      if (ready) {
+        onRefresh(true);
+      }
+    }, [ready, effectiveSign, resolvedHemisphere, serviceDateUTC])
+  );
 
   // ----- one-time init effect -----
   useEffect(() => {
@@ -219,8 +265,8 @@ export default function AstrologyScreen() {
           return;
         }
 
-        // Load horoscope
-        const data = await getAccessibleHoroscope(new Date(), signResolved, hemiResolved);
+        // Load horoscope (using UTC-midnight service date)
+        const data = await getAccessibleHoroscope(serviceDateUTC, signResolved, hemiResolved);
         setHoroscope(data || null);
 
         // Astronomical context
@@ -267,7 +313,7 @@ export default function AstrologyScreen() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [serviceDateUTC]); // include serviceDateUTC: if app launches after midnight, we fetch the right day
 
   // Translation effect
   useEffect(() => {
@@ -312,12 +358,12 @@ export default function AstrologyScreen() {
   };
 
   // Refresh
-  const onRefresh = async () => {
+  const onRefresh = async (silent = false) => {
     if (inFlight.current) return;
-    setRefreshing(true);
+    if (!silent) setRefreshing(true);
     try {
       if (effectiveSign) {
-        const data = await getAccessibleHoroscope(new Date(), effectiveSign, resolvedHemisphere);
+        const data = await getAccessibleHoroscope(serviceDateUTC, effectiveSign, resolvedHemisphere);
         setHoroscope(data || null);
       }
       const now = Date.now();
@@ -338,7 +384,7 @@ export default function AstrologyScreen() {
     } catch (err: any) {
       setError(err?.message || 'Failed to refresh horoscope.');
     } finally {
-      setRefreshing(false);
+      if (!silent) setRefreshing(false);
     }
   };
 
@@ -387,7 +433,7 @@ export default function AstrologyScreen() {
       <SafeAreaView style={styles.safeArea}>
         <ScrollView
           contentContainerStyle={styles.scrollContent}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#d4af37" colors={['#d4af37']} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => onRefresh()} tintColor="#d4af37" colors={['#d4af37']} />}
           showsVerticalScrollIndicator={false}
         >
           {/* Header */}
@@ -480,9 +526,6 @@ export default function AstrologyScreen() {
               <View style={styles.cardHeader}>
                 <Telescope size={20} color="#8b9dc3" />
                 <Text style={styles.cardTitle}>Cosmic Perspective</Text>
-                <View style={styles.premiumBadge}>
-                  <Crown size={12} color="#1a1a2e" />
-                </View>
               </View>
               <Text style={styles.cosmicText}>{getDisplayText(horoscope.celestialInsight)}</Text>
             </LinearGradient>
@@ -494,11 +537,6 @@ export default function AstrologyScreen() {
               <View style={styles.cardHeader}>
                 <Moon size={20} color="#8b9dc3" />
                 <Text style={styles.cardTitle}>Lunar Cycle</Text>
-                {hasAccess && (
-                  <View style={styles.premiumBadge}>
-                    <Crown size={12} color="#1a1a2e" />
-                  </View>
-                )}
               </View>
               <View style={styles.lunarInfo}>
                 <Text style={styles.lunarPhase}>{asString(moonPhase.phase)}</Text>
@@ -506,15 +544,6 @@ export default function AstrologyScreen() {
                 <Text style={styles.lunarNext}>
                   Next {asString(moonPhase.nextPhase)}: {asString(moonPhase.nextPhaseDate)}
                 </Text>
-                {hasAccess && (
-                  <Text style={styles.lunarGuidance}>
-                    {moonPhase.illumination > 75
-                      ? 'Perfect time for manifestation and releasing what no longer serves you.'
-                      : moonPhase.illumination < 25
-                      ? 'Ideal for new beginnings, setting intentions, and planting seeds for the future.'
-                      : 'A time of growth and building momentum toward your goals.'}
-                  </Text>
-                )}
               </View>
             </LinearGradient>
           )}
@@ -525,9 +554,6 @@ export default function AstrologyScreen() {
               <View style={styles.cardHeader}>
                 <Star size={20} color="#d4af37" />
                 <Text style={styles.cardTitle}>Planetary Influences</Text>
-                <View style={styles.premiumBadge}>
-                  <Crown size={12} color="#1a1a2e" />
-                </View>
               </View>
               <View style={styles.planetsGrid}>
                 {planetaryPositions.slice(0, 5).map((planet) => (
@@ -550,9 +576,6 @@ export default function AstrologyScreen() {
               <View style={styles.cardHeader}>
                 <Crown size={20} color="#8b9dc3" />
                 <Text style={styles.cardTitle}>Houses in Focus Today</Text>
-                <View style={styles.premiumBadge}>
-                  <Crown size={12} color="#1a1a2e" />
-                </View>
               </View>
               <View style={styles.housesGrid}>
                 {[1, 7, 10].map((houseNumber) => {
@@ -734,7 +757,6 @@ const styles = StyleSheet.create({
   lunarPhase: { fontSize: 20, fontFamily: 'Vazirmatn-Bold', color: '#8b9dc3', marginBottom: 4 },
   lunarIllumination: { fontSize: 16, fontFamily: 'Vazirmatn-Medium', color: '#e8e8e8', marginBottom: 8 },
   lunarNext: { fontSize: 14, fontFamily: 'Vazirmatn-Regular', color: '#8b9dc3' },
-  lunarGuidance: { fontSize: 14, fontFamily: 'Inter-Regular', color: '#e8e8e8', marginTop: 8, textAlign: 'center', fontStyle: 'italic' },
 
   eventItem: { marginBottom: 12, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(139, 157, 195, 0.2)' },
   eventName: { fontSize: 16, fontFamily: 'Vazirmatn-SemiBold', color: '#8b9dc3', marginBottom: 4 },
@@ -838,32 +860,5 @@ const styles = StyleSheet.create({
     fontFamily: 'Vazirmatn-SemiBold',
     color: '#d4af37',
     textAlign: 'right',
-  },
-
-  recalcBanner: {
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
-    alignItems: 'center',
-  },
-  recalcText: {
-    fontSize: 16,
-    fontFamily: 'Vazirmatn-Regular',
-    color: '#e8e8e8',
-    textAlign: 'center',
-    marginBottom: 12,
-  },
-  recalcButton: {
-    backgroundColor: '#d4af37',
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-  },
-  recalcButtonText: {
-    fontSize: 16,
-    fontFamily: 'Vazirmatn-SemiBold',
-    color: '#1a1a2e',
   },
 });
