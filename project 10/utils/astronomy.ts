@@ -1,7 +1,14 @@
 // utils/astronomy.ts
 import SunCalc from 'suncalc';
+
+// ───────────────────────────────────────────────────────────────────────────────
+// ENV (public) — make sure EXPO_PUBLIC_NASA_API_KEY is set in Netlify variables
+// ───────────────────────────────────────────────────────────────────────────────
+const NASA_KEY = process.env.EXPO_PUBLIC_NASA_API_KEY ?? '';
+
+// ───────────────────────────────────────────────────────────────────────────────
 // Types
-// -----------------------
+// ───────────────────────────────────────────────────────────────────────────────
 export interface AstronomicalEvent {
   name: string;
   description: string;
@@ -24,9 +31,96 @@ export interface PlanetaryPosition {
   retrograde: boolean;
 }
 
-// -----------------------
+// NASA APOD types (sanitized for UI)
+export interface ApodResult {
+  title: string;
+  date: string;      // YYYY-MM-DD
+  mediaType: 'image' | 'video' | 'other';
+  url: string;       // image URL or video URL
+  hdurl?: string;    // image HD (if provided)
+  thumbnailUrl?: string; // for videos
+  copyright?: string;
+  explanation?: string;
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
+// Helpers (generic)
+// ───────────────────────────────────────────────────────────────────────────────
+async function fetchJSON<T>(url: string, opts?: RequestInit & { timeoutMs?: number }): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 10000);
+  try {
+    const res = await fetch(url, { ...opts, signal: controller.signal });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`HTTP ${res.status} ${res.statusText}: ${txt || 'Request failed'}`);
+    }
+    return (await res.json()) as T;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function isNonEmptyString(x: unknown): x is string {
+  return typeof x === 'string' && x.trim().length > 0;
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
+// NASA — Astronomy Picture of the Day (APOD)
+// ───────────────────────────────────────────────────────────────────────────────
+/**
+ * Fetch NASA APOD (Astronomy Picture of the Day).
+ * Requires EXPO_PUBLIC_NASA_API_KEY (use "DEMO_KEY" for testing if needed).
+ * Client-side friendly; returns a sanitized object safe for UI.
+ */
+export async function getApod(date?: string): Promise<ApodResult | null> {
+  try {
+    if (!isNonEmptyString(NASA_KEY)) {
+      console.warn('[APOD] Missing EXPO_PUBLIC_NASA_API_KEY — returning null.');
+      return null;
+    }
+
+    const qs = new URLSearchParams({
+      api_key: NASA_KEY,
+      thumbs: 'true',
+    });
+    if (isNonEmptyString(date)) qs.set('date', date); // YYYY-MM-DD
+
+    const data = await fetchJSON<any>(`https://api.nasa.gov/planetary/apod?${qs.toString()}`, {
+      timeoutMs: 12000,
+    });
+
+    // Normalize/sanitize
+    const mediaType =
+      data.media_type === 'image' ? 'image' :
+      data.media_type === 'video' ? 'video' : 'other';
+
+    const result: ApodResult = {
+      title: isNonEmptyString(data.title) ? data.title : 'Astronomy Picture of the Day',
+      date: isNonEmptyString(data.date) ? data.date : new Date().toISOString().slice(0, 10),
+      mediaType,
+      url: isNonEmptyString(data.url) ? data.url : '',
+      hdurl: isNonEmptyString(data.hdurl) ? data.hdurl : undefined,
+      thumbnailUrl: isNonEmptyString(data.thumbnail_url) ? data.thumbnail_url : undefined,
+      copyright: isNonEmptyString(data.copyright) ? data.copyright : undefined,
+      explanation: isNonEmptyString(data.explanation) ? data.explanation : undefined,
+    };
+
+    // If it’s a video without thumbnail, fall back to url
+    if (mediaType === 'video' && !result.thumbnailUrl) {
+      result.thumbnailUrl = result.url;
+    }
+
+    return result;
+  } catch (err) {
+    console.error('[APOD] Failed to fetch:', err);
+    return null;
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
 // Events (unchanged)
-// -----------------------
+// ───────────────────────────────────────────────────────────────────────────────
 export const CURRENT_ASTRONOMICAL_EVENTS: AstronomicalEvent[] = [
   {
     name: "🦁 New Moon in Leo",
@@ -100,17 +194,15 @@ export const CURRENT_ASTRONOMICAL_EVENTS: AstronomicalEvent[] = [
   }
 ];
 
-// -----------------------
-// LUNAR — Sydney-accurate calc using SunCalc
-// -----------------------
+// ───────────────────────────────────────────────────────────────────────────────
+// LUNAR — Sydney-accurate calc using SunCalc (unchanged)
+// ───────────────────────────────────────────────────────────────────────────────
 function nowInSydney(): Date {
-  // Make a Date representing Sydney local time (AU)
   const sydneyStr = new Date().toLocaleString('en-US', { timeZone: 'Australia/Sydney' });
   return new Date(sydneyStr);
 }
 
 function phaseNameFromFraction(phase: number): 'New Moon' | 'First Quarter' | 'Full Moon' | 'Last Quarter' | 'Waxing Crescent' | 'Waxing Gibbous' | 'Waning Gibbous' | 'Waning Crescent' {
-  // phase ∈ [0..1): 0 New, 0.25 First Q, 0.5 Full, 0.75 Last Q
   if (Math.abs(phase - 0) < 0.0125 || phase > 0.9875) return 'New Moon';
   if (Math.abs(phase - 0.25) < 0.0125) return 'First Quarter';
   if (Math.abs(phase - 0.5) < 0.0125) return 'Full Moon';
@@ -144,18 +236,16 @@ function findNextQuarter(start: Date): { nextPhase: 'New Moon'|'First Quarter'|'
     for (const trg of targets) {
       const crossed =
         (startPhase <= trg.value && p >= trg.value) ||
-        (trg.value === 0 && startPhase > 0.95 && p < 0.05); // wrap near 1→0
+        (trg.value === 0 && startPhase > 0.95 && p < 0.05);
 
       if (crossed || Math.abs(p - trg.value) < 0.005) {
         return { nextPhase: trg.label, date: t };
       }
     }
   }
-  // Fallback ~2 weeks
   return { nextPhase: 'Full Moon', date: new Date(start.getTime() + 14 * 86400 * 1000) };
 }
 
-/** Return Sydney-accurate moon phase */
 export function getCurrentMoonPhase(): MoonPhase {
   const now = nowInSydney();
   const { fraction, phase } = SunCalc.getMoonIllumination(now);
@@ -182,25 +272,30 @@ export function getCurrentMoonPhase(): MoonPhase {
   };
 }
 
-// Next phase helper
 function getNextPhase(currentPhase: string): string {
   const phases = ['New Moon', 'Waxing Crescent', 'First Quarter', 'Waxing Gibbous', 'Full Moon', 'Waning Gibbous', 'Last Quarter', 'Waning Crescent'];
   const currentIndex = phases.indexOf(currentPhase);
   return currentIndex >= 0 ? phases[(currentIndex + 1) % phases.length] : 'Waxing Crescent';
 }
 
-// ---------- Planetary positions (enhanced) ----------
+// ───────────────────────────────────────────────────────────────────────────────
+// Planetary positions (existing + fallback) — unchanged
+// ───────────────────────────────────────────────────────────────────────────────
 type RawPlanet = {
-  name?: string;           // "Mercury"
-  planet?: string;         // alternative key
-  sign?: string;           // sometimes already provided
-  degree?: number;         // sometimes already provided
-  lon?: number;            // ecliptic longitude in degrees
-  longitude?: number;      // alt key
-  ecliptic_longitude?: number; // alt key
+  name?: string;
+  planet?: string;
+  sign?: string;
+  degree?: number;
+  lon?: number;
+  longitude?: number;
+  ecliptic_longitude?: number;
   retrograde?: boolean;
-  speed?: number;          // < 0 means retrograde in some feeds
-  velocity?: number;       // alt key
+  speed?: number;
+  velocity?: number;
+  // optional source marker used in your code:
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
+  source?: string;
 };
 
 const ZODIAC_SIGNS_ARRAY = [
@@ -209,30 +304,25 @@ const ZODIAC_SIGNS_ARRAY = [
 ];
 
 function lonToSignAndDegree(lon: number) {
-  // keep lon in [0,360)
   const L = ((lon % 360) + 360) % 360;
   const signIndex = Math.floor(L / 30);
-  const degree = Math.round((L - signIndex * 30) * 100) / 100; // keep two decimals
+  const degree = Math.round((L - signIndex * 30) * 100) / 100;
   return { sign: ZODIAC_SIGNS_ARRAY[signIndex], degree };
 }
 
 function normalizePlanetName(n?: string) {
   if (!n) return '';
-  // Ensure title case + strip weird symbols
   return n.replace(/_/g, ' ')
           .toLowerCase()
           .replace(/^\w/, c => c.toUpperCase());
 }
 
-// Prefer any longitude field the feed may use
 function getLon(raw: RawPlanet): number | null {
-  // common variants across feeds
   if (typeof raw.ecliptic_longitude === 'number') return raw.ecliptic_longitude;
   if (typeof raw.longitude === 'number') return raw.longitude;
   if (typeof raw.lon === 'number') return raw.lon;
-  // occasionally seen
   // @ts-ignore
-  if (typeof raw.lng === 'number') return raw.lng;
+  if (typeof (raw as any).lng === 'number') return (raw as any).lng;
   return null;
 }
 
@@ -240,92 +330,70 @@ function isCalcSource(src?: string) {
   return !!src && /calc|mock|approx/i.test(src);
 }
 
-// Session cache of last good values so we don't regress to 0°
 const lastGoodPositions = new Map<string, PlanetaryPosition>();
 
 function normalizePlanetaryPositions(rawList: RawPlanet[]): PlanetaryPosition[] {
   console.log('Normalizing planetary positions:', rawList);
-  
   const result: PlanetaryPosition[] = [];
 
   for (const raw of rawList) {
-    console.log('Processing raw planet data:', raw);
     const name = normalizePlanetName(raw.name || raw.planet) || 'Planet';
-
-    // Determine retrograde
     const retro = Boolean(
       raw.retrograde ??
       (typeof raw.speed === 'number' ? raw.speed < 0 : false) ??
       (typeof raw.velocity === 'number' ? raw.velocity < 0 : false)
     );
-
     const lon = getLon(raw);
 
-    // Case A: API already gives sign+degree AND degree is non-zero
     if (raw.sign && typeof raw.degree === 'number' && raw.degree !== 0) {
-      console.log(`Using direct sign/degree for: ${name}`);
       const pos: PlanetaryPosition = { planet: name, sign: raw.sign, degree: raw.degree, retrograde: retro };
       lastGoodPositions.set(name, pos);
       result.push(pos);
       continue;
     }
 
-    // Case B: API gives sign+degree but degree === 0
     if (raw.sign && typeof raw.degree === 'number' && raw.degree === 0) {
-      // If it's a calculated/mock source, try to compute from longitude first
-      if (isCalcSource(raw.source) && lon !== null) {
+      if (isCalcSource((raw as any).source) && lon !== null) {
         const { sign, degree } = lonToSignAndDegree(lon);
         const pos: PlanetaryPosition = { planet: name, sign, degree, retrograde: retro };
-        console.log(`Degree=0 from CALC; recomputed from longitude for ${name}: ${degree}° ${sign}`);
         lastGoodPositions.set(name, pos);
         result.push(pos);
         continue;
       }
 
-      // No longitude to compute — fall back to last known non-zero
       const cached = lastGoodPositions.get(name);
       if (cached) {
-        console.log(`Degree=0 without longitude; using last good for ${name}: ${cached.degree}° ${cached.sign}`);
         result.push(cached);
         continue;
       }
 
-      // As a last resort, use our fallback generator for this planet
       const fallbackPositions = getCurrentPlanetaryPositions();
       const fallbackPlanet = fallbackPositions.find(p => p.planet === name);
       if (fallbackPlanet) {
-        console.log(`Using fallback position for ${name}: ${fallbackPlanet.degree}° ${fallbackPlanet.sign}`);
         lastGoodPositions.set(name, fallbackPlanet);
         result.push(fallbackPlanet);
         continue;
       }
 
-      // Final fallback - accept the 0° reading
-      console.warn(`Accepting 0° ${raw.sign} for ${name} as final fallback`);
       const pos: PlanetaryPosition = { planet: name, sign: raw.sign, degree: 0, retrograde: retro };
       result.push(pos);
       continue;
     }
 
-    // Case C: No sign/degree, but we have longitude → compute
     if (lon !== null) {
       const { sign, degree } = lonToSignAndDegree(lon);
       const pos: PlanetaryPosition = { planet: name, sign, degree, retrograde: retro };
-      console.log(`Computed from longitude for ${name}: ${degree}° ${sign}`);
       lastGoodPositions.set(name, pos);
       result.push(pos);
       continue;
     }
 
-    // Case D: Nothing useful — fall back to last good if we have it
     const cached = lastGoodPositions.get(name);
     if (cached) {
-      console.log(`No usable fields; using last good for ${name}`);
       result.push(cached);
       continue;
     }
 
-    // Otherwise drop this planet
     console.warn(`Skipping ${name}: no sign/degree/longitude and no cache.`);
   }
 
@@ -333,70 +401,35 @@ function normalizePlanetaryPositions(rawList: RawPlanet[]): PlanetaryPosition[] 
   return result;
 }
 
-/**
- * Enhanced function to get current planetary positions with real data.
- * Falls back to the simplified generator only if the live payload is empty or errors.
- */
 export async function getCurrentPlanetaryPositionsEnhanced(
   hemisphere: 'Northern' | 'Southern' = 'Northern'
 ): Promise<PlanetaryPosition[]> {
   try {
-    // Note: Enhanced astronomical data service not available, using fallback
+    // Placeholder for future live source
     console.log('Using fallback planetary positions');
   } catch (err) {
     console.error('Error fetching enhanced planetary positions:', err);
   }
-
-  console.log('Using fallback planetary positions');
   return getCurrentPlanetaryPositions();
 }
 
 export function getCurrentPlanetaryPositions(): PlanetaryPosition[] {
-  // Updated planetary positions for August 13, 2025 based on astronomical ephemeris
   const today = nowInSydney();
   const baseDate = new Date('2025-08-13');
   const daysSinceBase = Math.floor((today.getTime() - baseDate.getTime()) / (1000 * 60 * 60 * 24));
-  
-  // More accurate positions for August 2025 (based on astronomical data)
-  // Mercury moves ~1.2°/day, Venus ~0.8°/day, Mars ~0.3°/day
 
   return [
-    {
-      planet: "Mercury",
-      sign: "Leo",
-      degree: Math.max(0, Math.min(29, 28 + daysSinceBase * 1.2)),
-      retrograde: false
-    },
-    {
-      planet: "Venus",
-      sign: "Virgo",
-      degree: Math.max(0, Math.min(29, 18 + daysSinceBase * 0.8)),
-      retrograde: false
-    },
-    {
-      planet: "Mars",
-      sign: "Gemini",
-      degree: Math.max(0, Math.min(29, 22 + daysSinceBase * 0.3)),
-      retrograde: false
-    },
-    {
-      planet: "Jupiter",
-      sign: "Gemini",
-      degree: Math.max(0, Math.min(29, 14 + daysSinceBase * 0.05)),
-      retrograde: false
-    },
-    {
-      planet: "Saturn",
-      sign: "Pisces",
-      degree: Math.max(0, Math.min(29, 19 + daysSinceBase * 0.02)),
-      retrograde: true
-    }
+    { planet: "Mercury",  sign: "Leo",      degree: Math.max(0, Math.min(29, 28 + daysSinceBase * 1.2)),  retrograde: false },
+    { planet: "Venus",    sign: "Virgo",    degree: Math.max(0, Math.min(29, 18 + daysSinceBase * 0.8)),  retrograde: false },
+    { planet: "Mars",     sign: "Gemini",   degree: Math.max(0, Math.min(29, 22 + daysSinceBase * 0.3)),  retrograde: false },
+    { planet: "Jupiter",  sign: "Gemini",   degree: Math.max(0, Math.min(29, 14 + daysSinceBase * 0.05)), retrograde: false },
+    { planet: "Saturn",   sign: "Pisces",   degree: Math.max(0, Math.min(29, 19 + daysSinceBase * 0.02)), retrograde: true  },
   ];
 }
 
-// -----------------------
+// ───────────────────────────────────────────────────────────────────────────────
 // Hemisphere events (unchanged logic)
-// -----------------------
+// ───────────────────────────────────────────────────────────────────────────────
 function getSouthernHemisphereEvents(): AstronomicalEvent[] {
   const today = new Date().toISOString().split('T')[0];
   return [
@@ -454,40 +487,17 @@ export function getHemisphereEvents(hemisphere: 'Northern' | 'Southern'): Astron
         }
       ];
     }
-    return [
-      {
-        name: "🌟 Southern Cross Navigation",
-        description: "The Southern Cross (Crux) serves as the southern hemisphere's primary navigation constellation, pointing toward the South Celestial Pole.",
-        date: today.toISOString().split('T')[0],
-        hemisphere: "Southern",
-        type: "planet"
-      },
-      {
-        name: "✨ Magellanic Clouds Viewing",
-        description: "Optimal viewing conditions for the Large and Small Magellanic Clouds, satellite galaxies of the Milky Way visible only from southern latitudes.",
-        date: today.toISOString().split('T')[0],
-        hemisphere: "Southern", 
-        type: "planet"
-      },
-      {
-        name: "🌌 Carina Nebula Region",
-        description: "The Carina constellation region offers spectacular deep-sky viewing, including the famous Carina Nebula, visible only from southern latitudes.",
-        date: today.toISOString().split('T')[0],
-        hemisphere: "Southern",
-        type: "planet"
-      }
-    ];
+    return getSouthernHemisphereEvents();
   }
 
   return filteredEvents;
 }
 
-// -----------------------
+// ───────────────────────────────────────────────────────────────────────────────
 // Constellations (unchanged logic + enhanced)
-// -----------------------
+// ───────────────────────────────────────────────────────────────────────────────
 export async function getVisibleConstellationsEnhanced(hemisphere: 'Northern' | 'Southern'): Promise<string[]> {
   try {
-    // Note: Enhanced astronomical data service not available, using fallback
     console.log('Using fallback constellations');
   } catch (error) {
     console.error('Error fetching enhanced constellations:', error);
@@ -519,7 +529,6 @@ export function getVisibleConstellations(hemisphere: 'Northern' | 'Southern'): s
 }
 
 export function getAstronomicalInsight(hemisphere: 'Northern' | 'Southern'): string {
-  // Use Sydney-accurate moon data for consistency
   const moonPhase = getCurrentMoonPhase();
   const events = getHemisphereEvents(hemisphere);
   const constellations = getVisibleConstellations(hemisphere);
@@ -547,4 +556,16 @@ export function getAstronomicalInsight(hemisphere: 'Northern' | 'Southern'): str
   }
 
   return insights[Math.floor(Math.random() * insights.length)];
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
+// NEW: one-call helper to return both your textual insight and NASA APOD
+// ───────────────────────────────────────────────────────────────────────────────
+export async function getAstronomicalInsightWithApod(
+  hemisphere: 'Northern' | 'Southern',
+  apodDate?: string // optional YYYY-MM-DD
+): Promise<{ insight: string; apod: ApodResult | null }> {
+  const insight = getAstronomicalInsight(hemisphere);
+  const apod = await getApod(apodDate);
+  return { insight, apod };
 }

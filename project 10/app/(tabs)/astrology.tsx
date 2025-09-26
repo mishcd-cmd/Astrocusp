@@ -1,3 +1,4 @@
+// app/(tabs)/astrology.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
@@ -18,8 +19,6 @@ import {
   Crown,
   Telescope,
   Gem,
-  Settings,
-  User,
   Sparkles,
 } from 'lucide-react-native';
 
@@ -31,15 +30,19 @@ import HoroscopeHeader from '../../components/HoroscopeHeader';
 import { getUserData, type UserProfile } from '../../utils/userData';
 import { getSubscriptionStatus } from '../../utils/billing';
 import { getAccessibleHoroscope, type HoroscopeData } from '../../utils/horoscopeData';
-import { getHemisphereEvents, getCurrentPlanetaryPositionsEnhanced } from '../../utils/astronomy';
+import {
+  getHemisphereEvents,
+  getCurrentPlanetaryPositionsEnhanced,
+  // ⬇️ Space highlights (NASA/ASA) — make sure utils/astronomy.ts exports these
+  getSpaceHighlights,
+  type SpaceHighlights,
+} from '../../utils/astronomy';
 import { getLunarNow } from '../../utils/lunar';
 import { getCuspGemstoneAndRitual } from '../../utils/cuspData';
 import { translateText, getUserLanguage, type SupportedLanguage } from '../../utils/translation';
-import { getDefaultSignFromUserData } from '../../utils/signs';
 import { useHemisphere } from '../../providers/HemisphereProvider';
 import HemisphereToggle from '../../components/HemisphereToggle';
 import { getAstrologicalHouse } from '../../utils/zodiacData';
-import { getEffectiveSign } from '../../utils/effectiveSign';
 
 /* -------------------------
  * Safe string helpers
@@ -49,7 +52,6 @@ function asString(v: any): string {
 }
 function stripVersionSuffix(v?: string) {
   const s = asString(v).trim();
-  // remove trailing " V3" style tags if present
   return s.replace(/\s*V\d+\s*$/i, '').trim();
 }
 
@@ -59,9 +61,9 @@ export default function AstrologyScreen() {
   const { hemisphere: contextHemisphere, setHemisphereSafe } = useHemisphere();
 
   // ----- internal guards -----
-  const initOnce = useRef(false);         // prevents the init effect from running twice
-  const inFlight = useRef(false);         // prevents overlapping async calls
-  const lastSubCheck = useRef<number>(0); // throttle billing checks
+  const initOnce = useRef(false);
+  const inFlight = useRef(false);
+  const lastSubCheck = useRef<number>(0);
 
   // ----- state -----
   const [ready, setReady] = useState(false);
@@ -78,27 +80,22 @@ export default function AstrologyScreen() {
   const [selectedHemisphere, setSelectedHemisphere] = useState<'Northern' | 'Southern'>('Northern');
   const [moonPhase, setMoonPhase] = useState<any>(null);
   const [astronomicalEvents, setAstronomicalEvents] = useState<any[]>([]);
-  const [planetaryPositions, setPlanetaryPositions] = useState<any[]>([]); // reserved (if you show them later)
+  const [planetaryPositions, setPlanetaryPositions] = useState<any[]>([]);
   const [currentLanguage, setCurrentLanguage] = useState<SupportedLanguage>('en');
   const [translatedContent, setTranslatedContent] = useState<any>({});
+  // ⬇️ New: Space highlights
+  const [space, setSpace] = useState<SpaceHighlights | null>(null);
 
   // Resolve header values (fast)
   const resolvedSign = useMemo(() => {
-    // 1) Highest priority: explicit route param (e.g. from "Explore your sign" nav)
     if (params.sign) {
       const decoded = decodeURIComponent(asString(params.sign));
       console.log('🎯 [astrology] Using route param sign:', decoded);
       return decoded;
     }
-    
-    // 2) Profile (no defaults here)
     if (user?.cuspResult) {
-      return user.cuspResult.isOnCusp
-        ? user.cuspResult.cuspName
-        : user.cuspResult.primarySign;
+      return user.cuspResult.isOnCusp ? user.cuspResult.cuspName : user.cuspResult.primarySign;
     }
-    
-    // 3) Nothing yet — wait (undefined means "don't render content yet")
     return undefined;
   }, [user, params.sign]);
 
@@ -108,41 +105,26 @@ export default function AstrologyScreen() {
     return contextHemisphere || (user?.hemisphere as 'Northern' | 'Southern') || 'Northern';
   }, [user, params.hemisphere, contextHemisphere]);
 
-  // Effective sign for data fetching
   const effectiveSign = useMemo(() => {
     return resolvedSign || selectedSign || '';
   }, [resolvedSign, selectedSign]);
 
-  // Effect to refetch when hemisphere changes
+  // Refetch when hemisphere changes
   useEffect(() => {
     if (!effectiveSign || !ready) return;
-    
     let cancelled = false;
     (async () => {
       try {
-        console.log('🔄 [astrology] Hemisphere changed, refetching:', { sign: effectiveSign, hemisphere: resolvedHemisphere });
         const data = await getAccessibleHoroscope(new Date(), effectiveSign, resolvedHemisphere);
-        if (!cancelled) {
-          setHoroscope(data || null);
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          console.error('❌ [astrology] Hemisphere fetch error:', err);
-        }
+        if (!cancelled) setHoroscope(data || null);
+      } catch (err) {
+        if (!cancelled) console.error('❌ [astrology] Hemisphere fetch error:', err);
       }
     })();
-    
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [effectiveSign, resolvedHemisphere, ready]);
-
-  // Debug effect to track dependency changes
-  useEffect(() => {
-    console.log('🔍 [astrology] Dependencies changed:', {
-      effectiveSign,
-      hemisphere: resolvedHemisphere,
-      hasUser: !!user,
-    });
-  }, [effectiveSign, resolvedHemisphere, user]);
 
   // ----- one-time init effect -----
   useEffect(() => {
@@ -160,25 +142,24 @@ export default function AstrologyScreen() {
       try {
         console.log('🚀 [astrology] Starting one-time init...');
 
-        let profile;
         try {
-          profile = await getUserData();
+          await getUserData();
         } catch (authError: any) {
-          // If getUserData fails due to token issues, redirect to login
-          if (authError.message?.includes('Invalid Refresh Token') || 
-              authError.message?.includes('Refresh Token Not Found') ||
-              authError.message?.includes('refresh_token_not_found')) {
+          if (
+            authError.message?.includes('Invalid Refresh Token') ||
+            authError.message?.includes('Refresh Token Not Found') ||
+            authError.message?.includes('refresh_token_not_found')
+          ) {
             console.log('🔄 [astrology] Auth token error, redirecting to login');
             router.replace('/auth/login');
             return;
           }
           throw authError;
         }
-        
+
         const u = await getUserData();
         if (cancelled) return;
 
-        // Only set state if changed (avoid re-render loops)
         setUser(prev => {
           const same =
             !!prev &&
@@ -189,18 +170,15 @@ export default function AstrologyScreen() {
           return same ? prev : u;
         });
 
-        // 2) Throttled subscription check (2 min)
+        // Throttled subscription check (2 min)
         const now = Date.now();
         if (now - lastSubCheck.current > 120_000) {
           lastSubCheck.current = now;
           const sub = await getSubscriptionStatus();
-          if (!cancelled) {
-            console.log('🔍 [astrology] Subscription status:', sub);
-            setHasAccess(!!sub?.active);
-          }
+          if (!cancelled) setHasAccess(!!sub?.active);
         }
 
-        // 3) Compute sign + hemisphere
+        // Compute sign + hemisphere
         const signParam = asString(params.sign) ? decodeURIComponent(asString(params.sign)) : '';
         const hemiParam = asString(params.hemisphere)
           ? (decodeURIComponent(asString(params.hemisphere)) as 'Northern' | 'Southern')
@@ -220,7 +198,6 @@ export default function AstrologyScreen() {
           setSelectedHemisphere(hemiResolved);
         }
 
-        // 4) Fail fast if absolutely no sign anywhere
         if (!signResolved) {
           if (!cancelled) {
             setError('No cosmic profile found. Please calculate your cosmic position.');
@@ -229,43 +206,29 @@ export default function AstrologyScreen() {
           return;
         }
 
-        // 5) Load horoscope for resolved sign
-        console.log('🔍 [astrology] Fetching horoscope for:', { sign: signResolved, hemisphere: hemiResolved });
-        // Force fresh fetch with debug logging
+        // Load horoscope
         const data = await getAccessibleHoroscope(new Date(), signResolved, hemiResolved);
-        console.log('🔍 [astrology] Raw horoscope response:', {
-          hasData: !!data,
-          hasDaily: !!data?.daily,
-          dailyPreview: data?.daily?.substring(0, 100) + '...',
-          hasAffirmation: !!data?.affirmation,
-          hasDeeper: !!data?.deeper,
-          hasAccess: data?.hasAccess
-        });
-        if (!cancelled) {
-          console.log('📊 [astrology] Horoscope data received:', {
-            hasDaily: !!data?.daily,
-            hasAffirmation: !!data?.affirmation,
-            hasDeeper: !!data?.deeper,
-            hasMysticOpening: !!data?.mysticOpening,
-            hasCelestialInsight: !!data?.celestialInsight,
-            hasMonthlyForecast: !!data?.monthlyForecast,
-            hasAccess: data?.hasAccess
-          });
-          setHoroscope(data || null);
-        }
+        if (!cancelled) setHoroscope(data || null);
 
-        // 6) Astronomical context
+        // Astronomical context
         const lunar = getLunarNow(hemiResolved);
         const events = getHemisphereEvents(hemiResolved);
         const positions = await getCurrentPlanetaryPositionsEnhanced(hemiResolved);
-
         if (!cancelled) {
           setMoonPhase(lunar);
           setAstronomicalEvents(events);
           setPlanetaryPositions(positions);
         }
 
-        // 7) Language preference
+        // ⬇️ Space highlights (NASA / ASA) — safe if keys are missing
+        try {
+          const sh = await getSpaceHighlights();
+          if (!cancelled) setSpace(sh);
+        } catch (e) {
+          console.warn('[astrology] space highlights error:', e);
+        }
+
+        // Language preference
         const language = await getUserLanguage();
         if (!cancelled) setCurrentLanguage(language);
 
@@ -291,7 +254,7 @@ export default function AstrologyScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Translation effect (separate from main init)
+  // Translation effect
   useEffect(() => {
     const run = async () => {
       if (currentLanguage !== 'zh' || !horoscope) {
@@ -300,31 +263,16 @@ export default function AstrologyScreen() {
       }
       try {
         const translations: any = {};
-        if (horoscope.daily) {
-          translations.daily = await translateText(asString(horoscope.daily), currentLanguage);
-        }
-        if (horoscope.affirmation) {
-          translations.affirmation = await translateText(
-            stripVersionSuffix(horoscope.affirmation),
-            currentLanguage
-          );
-        }
-        if (horoscope.deeper) {
-          translations.deeper = await translateText(
-            stripVersionSuffix(horoscope.deeper),
-            currentLanguage
-          );
-        }
-        if (horoscope.mysticOpening) {
-          translations.mysticOpening = await translateText(
-            asString(horoscope.mysticOpening),
-            currentLanguage
-          );
-        }
+        if (horoscope.daily) translations.daily = await translateText(asString(horoscope.daily), currentLanguage);
+        if (horoscope.affirmation)
+          translations.affirmation = await translateText(stripVersionSuffix(horoscope.affirmation), currentLanguage);
+        if (horoscope.deeper)
+          translations.deeper = await translateText(stripVersionSuffix(horoscope.deeper), currentLanguage);
+        if (horoscope.mysticOpening)
+          translations.mysticOpening = await translateText(asString(horoscope.mysticOpening), currentLanguage);
         setTranslatedContent(translations);
       } catch (error) {
         console.error('Translation error:', error);
-        // fall back to originals
         setTranslatedContent({
           daily: asString(horoscope.daily),
           affirmation: stripVersionSuffix(horoscope.affirmation),
@@ -339,39 +287,36 @@ export default function AstrologyScreen() {
   const getDisplayText = (original?: string) => {
     const base = asString(original);
     if (currentLanguage !== 'zh') return base;
-
-    // Check if we have a translation for this text
-    if (horoscope?.daily && base === asString(horoscope.daily)) {
-      return translatedContent.daily || base;
-    }
-    if (horoscope?.affirmation && base === stripVersionSuffix(horoscope.affirmation)) {
+    if (horoscope?.daily && base === asString(horoscope.daily)) return translatedContent.daily || base;
+    if (horoscope?.affirmation && base === stripVersionSuffix(horoscope.affirmation))
       return translatedContent.affirmation || base;
-    }
-    if (horoscope?.deeper && base === stripVersionSuffix(horoscope.deeper)) {
-      return translatedContent.deeper || base;
-    }
-    if (horoscope?.mysticOpening && base === asString(horoscope.mysticOpening)) {
+    if (horoscope?.deeper && base === stripVersionSuffix(horoscope.deeper)) return translatedContent.deeper || base;
+    if (horoscope?.mysticOpening && base === asString(horoscope.mysticOpening))
       return translatedContent.mysticOpening || base;
-    }
-    
     return base;
   };
 
   // Refresh
   const onRefresh = async () => {
-    if (inFlight.current) return; // Prevent overlapping refreshes
+    if (inFlight.current) return;
     setRefreshing(true);
     try {
       if (effectiveSign) {
         const data = await getAccessibleHoroscope(new Date(), effectiveSign, resolvedHemisphere);
         setHoroscope(data || null);
       }
-      // light sub re-check (throttled)
       const now = Date.now();
       if (now - lastSubCheck.current > 120_000) {
         lastSubCheck.current = now;
         const sub = await getSubscriptionStatus();
         setHasAccess(!!sub?.active);
+      }
+      // ⬇️ also refresh Space Highlights
+      try {
+        const sh = await getSpaceHighlights();
+        setSpace(sh);
+      } catch (e) {
+        console.warn('[astrology] space highlights refresh error:', e);
       }
     } catch (err: any) {
       setError(err?.message || 'Failed to refresh horoscope.');
@@ -380,18 +325,7 @@ export default function AstrologyScreen() {
     }
   };
 
-  const handleSignSelection = (sign: string, hemisphere: 'Northern' | 'Southern') => {
-    if (inFlight.current) return;
-    setSelectedSign(sign);
-    setSelectedHemisphere(hemisphere);
-    // Use the safe hemisphere setter from context
-    setHemisphereSafe(hemisphere);
-    setTimeout(() => onRefresh(), 100);
-  };
-
   const handleUpgrade = () => router.push('/subscription');
-  const handleSettings = () => router.push('/(tabs)/settings');
-  const handleAccount = () => router.push('/settings');
 
   // ----- RENDER -----
   if (!ready || loading) {
@@ -415,65 +349,10 @@ export default function AstrologyScreen() {
         <SafeAreaView style={styles.safeArea}>
           <View style={styles.errorContainer}>
             <Text style={styles.errorText}>{error}</Text>
-            
-            {/* Special help for Peter's case */}
-            {user?.email?.toLowerCase() === 'petermaricar@bigpond.com' && (
-              <LinearGradient
-                colors={['rgba(212, 175, 55, 0.2)', 'rgba(212, 175, 55, 0.1)']}
-                style={styles.peterHelpBanner}
-              >
-                <Text style={styles.peterHelpTitle}>Hi Peter! 👋</Text>
-                <Text style={styles.peterHelpText}>
-                  We found your Stripe subscription but your cosmic profile needs to be completed. 
-                  Please use the calculator below to set up your birth details.
-                </Text>
-                <Text style={styles.peterHelpNote}>
-                  💡 Remember to use 24-hour time format (e.g., 14:30 for 2:30 PM)
-                </Text>
-              </LinearGradient>
-            )}
-            
-            {/* Show recalc banner for users with corrupted profiles */}
-            {user?.needsRecalc && (
-              <LinearGradient
-                colors={['rgba(212, 175, 55, 0.2)', 'rgba(212, 175, 55, 0.1)']}
-                style={styles.recalcBanner}
-              >
-                <Text style={styles.recalcText}>
-                  Your profile needs a quick recalculation for best accuracy. Please enter your real birth details.
-                </Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    console.log('🟢 Recalculate pressed for user:', user?.email);
-                    
-                    // PETER DEBUG: Enhanced recalc button logging
-                    if (user?.email?.toLowerCase() === 'petermaricar@bigpond.com') {
-                      console.log('🔍 [PETER DEBUG] Recalculate button clicked');
-                      console.log('🔍 [PETER DEBUG] Current profile state:', {
-                        email: user.email,
-                        hemisphere: user.hemisphere,
-                        needsRecalc: user.needsRecalc,
-                        hasCuspResult: !!user.cuspResult,
-                        primarySign: user.cuspResult?.primarySign
-                      });
-                    }
-                    
-                    router.push('/(tabs)/find-cusp?source=recalc');
-                  }}
-                  style={styles.recalcButton}
-                  testID="recalcButton"
-                >
-                  <Text style={styles.recalcButtonText}>Recalculate Now</Text>
-                </TouchableOpacity>
-              </LinearGradient>
-            )}
-            
+
             <CosmicButton
               title="Calculate Your Cosmic Position"
-              onPress={() => {
-                console.log('🟢 Calculate button pressed');
-                router.push('/(tabs)/find-cusp');
-              }}
+              onPress={() => router.push('/(tabs)/find-cusp')}
               style={styles.errorButton}
             />
           </View>
@@ -483,16 +362,6 @@ export default function AstrologyScreen() {
   }
 
   const isCusp = asString(effectiveSign).toLowerCase().includes('cusp');
-
-  console.log('🔍 [astrology] Render state:', {
-    resolvedSign,
-    resolvedHemisphere,
-    selectedSign,
-    selectedHemisphere,
-    hasUser: !!user,
-    hasCuspResult: !!user?.cuspResult,
-    userEmail: user?.email,
-  });
 
   return (
     <View style={styles.container}>
@@ -506,10 +375,7 @@ export default function AstrologyScreen() {
         >
           {/* Header */}
           <HoroscopeHeader signLabel={resolvedSign || effectiveSign || 'Select your sign'} />
-
           <Text style={styles.hemisphereDisplay}>{resolvedHemisphere} Hemisphere</Text>
-
-          {/* Hemisphere Toggle */}
           <HemisphereToggle />
 
           {/* Daily Horoscope */}
@@ -625,12 +491,11 @@ export default function AstrologyScreen() {
                 </Text>
                 {hasAccess && (
                   <Text style={styles.lunarGuidance}>
-                    {moonPhase.illumination > 75 
+                    {moonPhase.illumination > 75
                       ? 'Perfect time for manifestation and releasing what no longer serves you.'
                       : moonPhase.illumination < 25
                       ? 'Ideal for new beginnings, setting intentions, and planting seeds for the future.'
-                      : 'A time of growth and building momentum toward your goals.'
-                    }
+                      : 'A time of growth and building momentum toward your goals.'}
                   </Text>
                 )}
               </View>
@@ -648,7 +513,7 @@ export default function AstrologyScreen() {
                 </View>
               </View>
               <View style={styles.planetsGrid}>
-                {planetaryPositions.slice(0, 5).map((planet, index) => (
+                {planetaryPositions.slice(0, 5).map((planet) => (
                   <View key={planet.planet} style={styles.planetItem}>
                     <Text style={styles.planetName}>{planet.planet}</Text>
                     <Text style={styles.planetPosition}>
@@ -658,9 +523,7 @@ export default function AstrologyScreen() {
                   </View>
                 ))}
               </View>
-              <Text style={styles.planetsNote}>
-                Current planetary positions affecting your cosmic energy today
-              </Text>
+              <Text style={styles.planetsNote}>Current planetary positions affecting your cosmic energy today</Text>
             </LinearGradient>
           )}
 
@@ -689,11 +552,10 @@ export default function AstrologyScreen() {
                   );
                 })}
               </View>
-              <Text style={styles.housesNote}>
-                These houses are particularly active in today's cosmic energy
-              </Text>
+              <Text style={styles.housesNote}>These houses are particularly active in today's cosmic energy</Text>
             </LinearGradient>
           )}
+
           {/* Astronomical Events */}
           {astronomicalEvents.length > 0 && (
             <LinearGradient colors={['rgba(139, 157, 195, 0.15)', 'rgba(139, 157, 195, 0.05)']} style={styles.eventsCard}>
@@ -710,6 +572,61 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
+          {/* ⬇️ Space Highlights (NASA / ASA) */}
+          {space && (space.nasa || space.asa) && (
+            <LinearGradient
+              colors={['rgba(139, 157, 195, 0.15)', 'rgba(139, 157, 195, 0.05)']}
+              style={styles.spaceCard}
+            >
+              <View style={styles.cardHeader}>
+                <Telescope size={20} color="#8b9dc3" />
+                <Text style={styles.cardTitle}>Space Highlights</Text>
+              </View>
+
+              {space.nasa && (
+                <View style={styles.spaceItem}>
+                  <Text style={styles.spaceSource}>NASA</Text>
+                  {space.nasa.title ? <Text style={styles.spaceTitle}>{space.nasa.title}</Text> : null}
+                  {space.nasa.date ? <Text style={styles.spaceMeta}>{space.nasa.date}</Text> : null}
+                  {space.nasa.description ? <Text style={styles.spaceDesc}>{space.nasa.description}</Text> : null}
+                  {space.nasa.url ? (
+                    <Text
+                      style={styles.spaceLink}
+                      onPress={() => {
+                        if (typeof window !== 'undefined') {
+                          window.open(space.nasa!.url!, '_blank', 'noopener,noreferrer');
+                        }
+                      }}
+                    >
+                      View on NASA →
+                    </Text>
+                  ) : null}
+                </View>
+              )}
+
+              {space.asa && (
+                <View style={styles.spaceItem}>
+                  <Text style={styles.spaceSource}>ASA</Text>
+                  {space.asa.title ? <Text style={styles.spaceTitle}>{space.asa.title}</Text> : null}
+                  {space.asa.date ? <Text style={styles.spaceMeta}>{space.asa.date}</Text> : null}
+                  {space.asa.description ? <Text style={styles.spaceDesc}>{space.asa.description}</Text> : null}
+                  {space.asa.url ? (
+                    <Text
+                      style={styles.spaceLink}
+                      onPress={() => {
+                        if (typeof window !== 'undefined') {
+                          window.open(space.asa!.url!, '_blank', 'noopener,noreferrer');
+                        }
+                      }}
+                    >
+                      View on ASA →
+                    </Text>
+                  ) : null}
+                </View>
+              )}
+            </LinearGradient>
+          )}
+
           {/* Upgrade CTA */}
           {!hasAccess && (
             <LinearGradient colors={['rgba(212, 175, 55, 0.2)', 'rgba(212, 175, 55, 0.1)']} style={styles.upgradeCard}>
@@ -718,12 +635,12 @@ export default function AstrologyScreen() {
                 <Text style={styles.upgradeTitle}>Unlock Astral Plane</Text>
               </View>
               <Text style={styles.upgradeDescription}>
-                Get deeper insights, monthly forecasts, cusp-specific guidance, planetary positions, lunar cycle guidance, cosmic perspective, and astrological houses.
+                Get deeper insights, monthly forecasts, cusp-specific guidance, planetary positions, lunar cycle guidance,
+                cosmic perspective, and astrological houses.
               </Text>
               <CosmicButton title="Upgrade Now" onPress={handleUpgrade} style={styles.upgradeButton} />
             </LinearGradient>
           )}
-
         </ScrollView>
       </SafeAreaView>
     </View>
@@ -741,37 +658,6 @@ const styles = StyleSheet.create({
   errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
   errorText: { fontSize: 18, fontFamily: 'Vazirmatn-Medium', color: '#ff6b6b', textAlign: 'center', marginBottom: 24 },
   errorButton: { minWidth: 200 },
-
-  peterHelpBanner: {
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
-    alignItems: 'center',
-  },
-  peterHelpTitle: {
-    fontSize: 20,
-    fontFamily: 'Inter-Bold',
-    color: '#d4af37',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  peterHelpText: {
-    fontSize: 16,
-    fontFamily: 'Inter-Regular',
-    color: '#e8e8e8',
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 8,
-  },
-  peterHelpNote: {
-    fontSize: 14,
-    fontFamily: 'Inter-Regular',
-    color: '#8b9dc3',
-    textAlign: 'center',
-    fontStyle: 'italic',
-  },
 
   hemisphereDisplay: { fontSize: 14, fontFamily: 'Vazirmatn-Regular', color: '#8b9dc3', textAlign: 'center', marginBottom: 20 },
 
@@ -830,6 +716,54 @@ const styles = StyleSheet.create({
   houseName: { fontSize: 16, fontFamily: 'Vazirmatn-SemiBold', color: '#e8e8e8', marginBottom: 4 },
   houseDescription: { fontSize: 14, fontFamily: 'Vazirmatn-Regular', color: '#8b9dc3', lineHeight: 18 },
   housesNote: { fontSize: 12, fontFamily: 'Vazirmatn-Regular', color: '#8b9dc3', textAlign: 'center', marginTop: 12, fontStyle: 'italic' },
+
+  // ⬇️ Space Highlights styles
+  spaceCard: {
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(139, 157, 195, 0.3)',
+  },
+  spaceItem: {
+    backgroundColor: 'rgba(26, 26, 46, 0.4)',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12,
+  },
+  spaceSource: {
+    fontSize: 12,
+    fontFamily: 'Vazirmatn-SemiBold',
+    color: '#d4af37',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  spaceTitle: {
+    fontSize: 16,
+    fontFamily: 'Vazirmatn-SemiBold',
+    color: '#e8e8e8',
+    marginBottom: 4,
+  },
+  spaceMeta: {
+    fontSize: 12,
+    fontFamily: 'Inter-Regular',
+    color: '#8b9dc3',
+    marginBottom: 8,
+  },
+  spaceDesc: {
+    fontSize: 14,
+    fontFamily: 'Vazirmatn-Regular',
+    color: '#e8e8e8',
+    lineHeight: 20,
+  },
+  spaceLink: {
+    marginTop: 10,
+    fontSize: 14,
+    fontFamily: 'Vazirmatn-SemiBold',
+    color: '#d4af37',
+    textAlign: 'right',
+  },
 
   recalcBanner: {
     borderRadius: 12,
