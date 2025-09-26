@@ -32,7 +32,7 @@ export default function CuspLogo({ size = 120, animated = false }: CuspLogoProps
       
       {/* Use the correct logo image */}
       <Image
-        source={require('../assets/images/79c379dc-0e2d-4f09-9704-87bcfb25d71b.png')}
+        source={require('../assets/images/icon.png')}
         style={[styles.logoImage, { width: size, height: size }]}
         resizeMode="contain"
       />

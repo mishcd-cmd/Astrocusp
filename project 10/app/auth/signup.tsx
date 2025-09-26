@@ -180,7 +180,7 @@ export default function Signup() {
             <View style={styles.content}>
               <View style={styles.logoContainer}>
                 <Image
-                  source={require('@/assets/images/79c379dc-0e2d-4f09-9704-87bcfb25d71b.png')}
+                  source={require('@/assets/images/icon.png')}
                   style={[styles.logo, styles.logoWithBackground]}
                   resizeMode="contain"
                 />

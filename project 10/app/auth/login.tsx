@@ -144,7 +144,7 @@ export default function LoginScreen() {
               <View style={styles.logoContainer}>
                 <Text style={styles.appName}>ASTRO CUSP</Text>
                 <Image
-                  source={require('@/assets/images/79c379dc-0e2d-4f09-9704-87bcfb25d71b.png')}
+                  source={require('@/assets/images/icon.png')}
                   style={styles.logo}
                   resizeMode="contain"
                 />
