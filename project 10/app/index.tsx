@@ -1,124 +1,126 @@
-// app/(tabs)/index.tsx
+// app/index.tsx
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, SafeAreaView } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
 import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import CosmicBackground from '@/components/CosmicBackground';
-import CosmicButton from '@/components/CosmicButton';
 
-export default function WelcomeScreen() {
+// ✅ Use require so Metro bundles the image
+const logo = require('../assets/images/icon.png'); // path from app/index.tsx → assets/images/icon.png
+
+export default function Welcome() {
   const router = useRouter();
 
   return (
     <View style={styles.container}>
       <CosmicBackground />
-      <SafeAreaView style={styles.safeArea}>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          {/* === 1) HERO — AT THE VERY TOP === */}
-          <View style={styles.hero}>
-            <Text style={styles.heroTitle}>Welcome to Astrocusp</Text>
-            <Text style={styles.heroSubtitle}>
-              Daily guidance for cusp souls and pure-signs—tuned to your hemisphere, lunar phase, and current sky.
-            </Text>
-          </View>
-
-          {/* === 2) EXPLORE FIRST — RIGHT UNDER THE HERO === */}
-          <LinearGradient
-            colors={['rgba(212, 175, 55, 0.18)', 'rgba(212, 175, 55, 0.08)']}
-            style={styles.card}
-          >
-            <Text style={styles.cardTitle}>Just want to explore?</Text>
-            <Text style={styles.cardText}>
-              Jump straight to the calculator and discover your cusp or pure sign. No sign-in required.
-            </Text>
-
-            <CosmicButton
-              title="Calculate my cusp"
-              onPress={() => router.push('/(tabs)/find-cusp')}
-              style={styles.primaryButton}
-            />
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {/* 🔝 Explore first */}
+        <TouchableOpacity
+          onPress={() => router.push('/(tabs)/find-cusp')}
+          style={styles.exploreCta}
+          activeOpacity={0.8}
+        >
+          <LinearGradient colors={['#2a2a44', '#1a1a2e']} style={styles.exploreCtaInner}>
+            <Text style={styles.exploreTitle}>Just want to explore?</Text>
+            <Text style={styles.exploreSubtitle}>Calculate your cusp instantly →</Text>
           </LinearGradient>
+        </TouchableOpacity>
 
-          {/* === 3) SIGN IN / WELCOME BACK (BELOW EXPLORE) === */}
-          <LinearGradient
-            colors={['rgba(139, 157, 195, 0.18)', 'rgba(139, 157, 195, 0.08)']}
-            style={styles.card}
-          >
-            <Text style={styles.cardTitle}>Welcome back</Text>
-            <Text style={styles.cardText}>
-              Sign in to see your Daily Guidance, save your profile, and unlock premium insights.
-            </Text>
+        {/* 🔰 Hero */}
+        <View style={styles.hero}>
+          <Image source={logo} style={styles.logo} resizeMode="contain" />
+          <Text style={styles.title}>Welcome to Astrocusp</Text>
+          <Text style={styles.subtitle}>
+            Daily guidance for cusp souls and pure-signs—tuned to your hemisphere, lunar phase, and current sky.
+          </Text>
+        </View>
 
-            <View style={styles.buttonRow}>
-              <CosmicButton
-                title="Sign in"
-                onPress={() => router.push('/auth/login')}
-                style={styles.secondaryButton}
-              />
-              <CosmicButton
-                title="Create account"
-                onPress={() => router.push('/auth/signup')}
-                style={styles.ghostButton}
-              />
-            </View>
-          </LinearGradient>
+        {/* ✅ Actions — Create account restored */}
+        <View style={styles.actions}>
+          <TouchableOpacity onPress={() => router.push('/auth/signup')} style={styles.btnPrimary}>
+            <Text style={styles.btnPrimaryText}>Create account</Text>
+          </TouchableOpacity>
 
-          {/* (Optional) Anything else can come after this */}
-        </ScrollView>
-      </SafeAreaView>
+          <TouchableOpacity onPress={() => router.push('/auth/login')} style={styles.btnSecondary}>
+            <Text style={styles.btnSecondaryText}>Sign in</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => router.push('/(tabs)/astrology')} style={styles.btnTertiary}>
+            <Text style={styles.btnTertiaryText}>Go to Daily Guidance</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  safeArea: { flex: 1 },
-  content: { paddingHorizontal: 24, paddingBottom: 40 },
+  content: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 48 },
+
+  // TOP CTA
+  exploreCta: { marginBottom: 20 },
+  exploreCtaInner: {
+    borderRadius: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(139,157,195,0.35)',
+  },
+  exploreTitle: {
+    fontSize: 16,
+    color: '#e8e8e8',
+    fontFamily: 'Vazirmatn-SemiBold',
+    textAlign: 'center',
+  },
+  exploreSubtitle: {
+    marginTop: 4,
+    fontSize: 14,
+    color: '#d4af37',
+    fontFamily: 'Vazirmatn-Medium',
+    textAlign: 'center',
+  },
 
   // HERO
-  hero: { paddingTop: 12, paddingBottom: 16, alignItems: 'center' },
-  heroTitle: {
-    fontSize: 26,
-    color: '#e8e8e8',
-    fontFamily: 'Vazirmatn-Bold',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  heroSubtitle: {
-    fontSize: 15,
+  hero: { alignItems: 'center', marginBottom: 24 },
+  logo: { width: 96, height: 96, marginBottom: 12, borderRadius: 20 },
+  title: { fontSize: 22, color: '#e8e8e8', fontFamily: 'Vazirmatn-Bold', textAlign: 'center' },
+  subtitle: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 20,
     color: '#8b9dc3',
     fontFamily: 'Vazirmatn-Regular',
     textAlign: 'center',
-    lineHeight: 22,
   },
 
-  // CARDS
-  card: {
-    borderRadius: 16,
-    padding: 20,
-    marginTop: 14,
+  // ACTIONS
+  actions: { gap: 12, marginTop: 24 },
+
+  btnPrimary: {
+    backgroundColor: '#d4af37',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  btnPrimaryText: { color: '#1a1a2e', fontFamily: 'Vazirmatn-SemiBold', fontSize: 16 },
+
+  btnSecondary: {
+    backgroundColor: 'rgba(26,26,46,0.6)',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(139, 157, 195, 0.28)',
+    borderColor: 'rgba(139,157,195,0.35)',
   },
-  cardTitle: {
-    fontSize: 18,
-    color: '#e8e8e8',
-    fontFamily: 'Vazirmatn-SemiBold',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  cardText: {
-    fontSize: 14,
-    color: '#e8e8e8',
-    fontFamily: 'Vazirmatn-Regular',
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 16,
-  },
+  btnSecondaryText: { color: '#e8e8e8', fontFamily: 'Vazirmatn-SemiBold', fontSize: 16 },
 
-  // BUTTONS
-  primaryButton: { minWidth: 200, alignSelf: 'center' },
-  secondaryButton: { minWidth: 140, flex: 1, marginRight: 8 },
-  ghostButton: { minWidth: 140, flex: 1, marginLeft: 8 },
-  buttonRow: { flexDirection: 'row', gap: 12 },
+  btnTertiary: {
+    backgroundColor: 'transparent',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  btnTertiaryText: { color: '#8b9dc3', fontFamily: 'Vazirmatn-Medium', fontSize: 15 },
 });

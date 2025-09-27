@@ -1,33 +1,27 @@
 {
   "expo": {
-    "name": "Astro Cusp",
-    "slug": "astrocusp",
-    "version": "1.0.1",
-    "orientation": "portrait",
+    "name": "Astrocusp",
+    "slug": "astro-cusp",
+    "scheme": "astrocusp",
     "icon": "./assets/images/icon.png",
-    "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/images/icon.png",
+      "image": "./assets/images/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#0f1121"
     },
-    "assetBundlePatterns": [
-      "**/*"
-    ],
-    "web": {
-      "favicon": "./assets/images/favicon.png",
-      "bundler": "metro",
-      "output": "static",
-      "build": {
-        "babel": {
-          "include": ["@expo/vector-icons"]
-        }
+    "assetBundlePatterns": ["**/*"],
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#0f1121"
       }
     },
-    "plugins": [
-      "expo-router"
-    ],
-    "platforms": ["web"],
-    "scheme": "astrocusp"
+    "ios": {
+      "icon": "./assets/images/icon.png"
+    },
+    "web": {
+      "favicon": "./assets/images/icon.png",
+      "bundler": "metro"
+    }
   }
 }
