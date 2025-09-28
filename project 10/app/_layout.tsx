@@ -1,22 +1,62 @@
 // app/_layout.tsx
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import { Text, TextInput, Platform } from 'react-native';
 
-// Hemisphere context (required for useHemisphere)
+// Fonts
+import {
+  useFonts,
+  Vazirmatn_400Regular,
+  Vazirmatn_500Medium,
+  Vazirmatn_600SemiBold,
+  Vazirmatn_700Bold,
+} from '@expo-google-fonts/vazirmatn';
+
+// Hemisphere context (needed for useHemisphere hooks in screens)
 import { HemisphereProvider } from '@/providers/HemisphereProvider';
 
-// ✅ Your global font initializer (you already created this)
-import GlobalFontDefault from '@/components/GlobalFontDefault';
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
-// If you use Gesture Handler anywhere, keep this import at the top-level entry once in your app
-// import 'react-native-gesture-handler';
+function applyGlobalFontDefaults() {
+  // Ensure we don’t overwrite other defaultProps if they exist
+  const baseTextDefaults = Text.defaultProps ?? {};
+  const baseInputDefaults = TextInput.defaultProps ?? {};
+
+  Text.defaultProps = {
+    ...baseTextDefaults,
+    style: [{ fontFamily: 'Vazirmatn-Regular' }, baseTextDefaults.style],
+  };
+
+  TextInput.defaultProps = {
+    ...baseInputDefaults,
+    style: [{ fontFamily: 'Vazirmatn-Regular' }, baseInputDefaults.style],
+  };
+}
 
 export default function RootLayout() {
+  // Load Vazirmatn weights and expose them under the names your styles use
+  const [loaded] = useFonts({
+    'Vazirmatn-Regular': Vazirmatn_400Regular,
+    'Vazirmatn-Medium': Vazirmatn_500Medium,
+    'Vazirmatn-SemiBold': Vazirmatn_600SemiBold,
+    'Vazirmatn-Bold': Vazirmatn_700Bold,
+  });
+
+  useEffect(() => {
+    if (!loaded) return;
+    // Set global Text/TextInput defaults once fonts are ready
+    applyGlobalFontDefaults();
+    // Hide splash when ready
+    SplashScreen.hideAsync().catch(() => {});
+  }, [loaded]);
+
+  // Don’t render until fonts are ready (prevents FOUT)
+  if (!loaded) return null;
+
   return (
     <HemisphereProvider initialHemisphere="Northern">
-      {/* Load Vazirmatn and set global defaults for <Text>/<TextInput> */}
-      <GlobalFontDefault />
-      <Stack screenOptions={{ headerShown: false, animation: 'fade' }} />
+      <Stack screenOptions={{ headerShown: false, animation: Platform.OS === 'web' ? 'fade' : 'default' }} />
     </HemisphereProvider>
   );
 }
