@@ -1,105 +1,71 @@
-import 'react-native-url-polyfill/auto';
+// utils/supabase.ts
 import { createClient } from '@supabase/supabase-js';
-import { Platform } from 'react-native';
+import type { Session } from '@supabase/supabase-js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// EMERGENCY: Log environment at startup to verify correct build
-console.log('🔍 [env] SUPABASE_URL:', process.env.EXPO_PUBLIC_SUPABASE_URL);
-console.log('🔍 [env] ANON_KEY prefix:', (process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '').slice(0, 16));
-console.log('🔍 [env] ANON_KEY length:', (process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '').length);
-console.log('🔍 [env] SITE_URL:', process.env.EXPO_PUBLIC_SITE_URL);
-console.log('🔍 [env] Build timestamp:', new Date().toISOString());
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
 
-// EMERGENCY: Hardcode credentials to prevent lockout
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://fulzqbwojvrripsuoreh.supabase.co';
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ1bHpxYndvanZycmlwc3VvcmVoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM5MzU2NjAsImV4cCI6MjA2OTUxMTY2MH0.W6Ok6anVypNt6NegyEHNs2F8pNIrR6Uq7O1vxdNDmGw';
+// One key for all platforms so your logs line up
+export const AUTH_STORAGE_KEY = 'astro-cusp-auth-session';
 
-console.log('🔍 [supabase] Initializing with:', {
-  url: SUPABASE_URL,
-  keyPrefix: SUPABASE_ANON_KEY?.substring(0, 20) + '...',
-  keyLength: SUPABASE_ANON_KEY?.length,
-  hasUrl: !!SUPABASE_URL,
-  hasKey: !!SUPABASE_ANON_KEY
-});
+const isWeb = typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 
-const isBrowser = typeof window !== 'undefined';
-
-// Create a robust storage adapter that ensures session persistence
-const createStorageAdapter = () => {
-  if (!isBrowser) {
-    // During static build (Node.js environment), don't use any storage
-    return {
-      getItem: () => Promise.resolve(null),
-      setItem: () => Promise.resolve(),
-      removeItem: () => Promise.resolve(),
-    };
-  }
-  
-  // In browser, use localStorage with enhanced persistence
-  if (Platform.OS === 'web') {
-    return {
-      getItem: async (key: string) => {
-        try {
-          const item = localStorage.getItem(key);
-          console.log(`🔍 [storage] getItem(${key}):`, item ? `found (${item.length} chars)` : 'null');
-          return item;
-        } catch (error) {
-          console.error(`❌ [storage] getItem(${key}) failed:`, error);
-          return null;
-        }
-      },
-      setItem: async (key: string, value: string) => {
-        try {
-          localStorage.setItem(key, value);
-          console.log(`💾 [storage] setItem(${key}): saved (${value.length} chars)`);
-          
-          // Verify it was actually saved
-          const verification = localStorage.getItem(key);
-          if (!verification) {
-            console.error(`❌ [storage] setItem verification failed for ${key}`);
-          } else {
-            console.log(`✅ [storage] setItem verified for ${key}`);
-          }
-        } catch (error) {
-          console.error(`❌ [storage] setItem(${key}) failed:`, error);
-        }
-      },
-      removeItem: async (key: string) => {
-        try {
-          localStorage.removeItem(key);
-          console.log(`🗑️ [storage] removeItem(${key}): removed`);
-          
-          // Verify it was actually removed
-          const verification = localStorage.getItem(key);
-          if (verification) {
-            console.error(`❌ [storage] removeItem verification failed for ${key}`);
-          } else {
-            console.log(`✅ [storage] removeItem verified for ${key}`);
-          }
-        } catch (error) {
-          console.error(`❌ [storage] removeItem(${key}) failed:`, error);
-        }
-      },
-    };
-  }
-  
-  // Fallback for non-web environments
-  return {
-    getItem: () => Promise.resolve(null),
-    setItem: () => Promise.resolve(),
-    removeItem: () => Promise.resolve(),
-  };
+// Minimal storage adapter that works on web (localStorage) and native (AsyncStorage)
+const storage = {
+  getItem: async (_: string) => {
+    try {
+      if (isWeb) return window.localStorage.getItem(AUTH_STORAGE_KEY);
+      return await AsyncStorage.getItem(AUTH_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  },
+  setItem: async (_: string, value: string) => {
+    try {
+      if (isWeb) window.localStorage.setItem(AUTH_STORAGE_KEY, value);
+      else await AsyncStorage.setItem(AUTH_STORAGE_KEY, value);
+    } catch {}
+  },
+  removeItem: async (_: string) => {
+    try {
+      if (isWeb) window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      else await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
+    } catch {}
+  },
 };
 
+// Create the client with persistent session + auto refresh + PKCE (for web)
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
-    storage: createStorageAdapter(),
-    autoRefreshToken: true,
     persistSession: true,
-    storageKey: 'astro-cusp-auth-session',
-    detectSessionInUrl: true,
+    storage,
+    storageKey: AUTH_STORAGE_KEY,
+    autoRefreshToken: true,
     flowType: 'pkce',
-    debug: false, // Reduce noise but keep persistence logging
+    detectSessionInUrl: true, // web PKCE callback support
   },
 });
 
-export default supabase;
+// Keep storage in sync on every auth change
+supabase.auth.onAuthStateChange(async (_event, session) => {
+  try {
+    if (session) {
+      await storage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+    } else {
+      await storage.removeItem(AUTH_STORAGE_KEY);
+    }
+  } catch {}
+});
+
+// Ensure refresh runs even if the tab stays focused for a long time
+// (On web, @supabase/js also refreshes on visibilitychange; this is extra-safe)
+if (typeof supabase.auth.startAutoRefresh === 'function') {
+  supabase.auth.startAutoRefresh();
+}
+
+// Small helper if you want to await rehydration in a provider
+export async function getCurrentSession(): Promise<Session | null> {
+  const { data } = await supabase.auth.getSession();
+  return data.session ?? null;
+}
