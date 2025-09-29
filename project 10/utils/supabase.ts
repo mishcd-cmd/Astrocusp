@@ -2,51 +2,46 @@
 import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Read from Expo public env (works on web + native)
+// Env (Expo): set these in your .env / Netlify
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL!;
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+const SUPABASE_ANON = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
 
-// Storage adapter: use localStorage on web, AsyncStorage elsewhere
-const storageKey = 'astro-cusp-auth-session';
+// Cross-platform storage (LocalStorage on web, AsyncStorage on native)
+const isWeb = typeof window !== 'undefined';
 
-const Storage = {
+const storage = {
   getItem: async (key: string) => {
     try {
-      if (typeof window !== 'undefined' && 'localStorage' in window) {
-        return window.localStorage.getItem(key);
-      }
+      if (isWeb && window?.localStorage) return window.localStorage.getItem(key);
       return await AsyncStorage.getItem(key);
     } catch {
       return null;
     }
   },
   setItem: async (key: string, value: string) => {
-    if (typeof window !== 'undefined' && 'localStorage' in window) {
-      window.localStorage.setItem(key, value);
-      return;
-    }
+    if (isWeb && window?.localStorage) { window.localStorage.setItem(key, value); return; }
     await AsyncStorage.setItem(key, value);
   },
   removeItem: async (key: string) => {
-    if (typeof window !== 'undefined' && 'localStorage' in window) {
-      window.localStorage.removeItem(key);
-      return;
-    }
+    if (isWeb && window?.localStorage) { window.localStorage.removeItem(key); return; }
     await AsyncStorage.removeItem(key);
   },
 };
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+// IMPORTANT: we set detectSessionInUrl=false (your /auth/callback handles PKCE)
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON, {
   auth: {
+    flowType: 'pkce',
     persistSession: true,
     autoRefreshToken: true,
-    detectSessionInUrl: true,
-    storage: Storage as any,
-    storageKey,
+    detectSessionInUrl: false,
+    storage,
+    storageKey: 'astro-cusp-auth-session', // stable key so it restores after reload
   },
 });
 
-// Optional: helpful logs so you can see persistence working
-supabase.auth.onAuthStateChange((event, session) => {
-  console.log('🔐 [supabase] auth state:', event, session?.user?.email);
-});
+// Small helper you can import anywhere
+export async function getCurrentSession() {
+  const { data } = await supabase.auth.getSession();
+  return data.session ?? null;
+}
