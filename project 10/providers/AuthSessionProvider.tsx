@@ -1,56 +1,52 @@
-// providers/AuthProvider.tsx
+// providers/AuthSessionProvider.tsx
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/utils/supabase';
 
-type AuthStatus = 'loading' | 'in' | 'out';
-type AuthCtx = {
-  status: AuthStatus;
-  session: import('@supabase/supabase-js').Session | null;
+// Simple cross-platform storage (uses AsyncStorage on native, localStorage on web)
+type Session = Awaited<ReturnType<typeof supabase.auth.getSession>>['data']['session'];
+
+type Status = 'loading' | 'in' | 'out';
+
+type Ctx = {
+  status: Status;
+  session: Session | null;
 };
 
-const Ctx = createContext<AuthCtx>({ status: 'loading', session: null });
+const AuthSessionContext = createContext<Ctx | undefined>(undefined);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [status, setStatus] = useState<AuthStatus>('loading');
-  const [session, setSession] = useState<import('@supabase/supabase-js').Session | null>(null);
+export function AuthSessionProvider({ children }: { children: React.ReactNode }) {
+  const [status, setStatus] = useState<Status>('loading');
+  const [session, setSession] = useState<Session | null>(null);
 
-  // 1) First, read any persisted session from storage
+  // On first mount: restore session
   useEffect(() => {
     let mounted = true;
-    (async () => {
-      const { data, error } = await supabase.auth.getSession();
-      if (!mounted) return;
-      if (error) {
-        console.log('🔐 [auth] getSession error', error);
-        setSession(null);
-        setStatus('out');
-      } else {
-        setSession(data.session ?? null);
-        setStatus(data.session ? 'in' : 'out');
-        if (data.session) {
-          console.log('🔐 [auth] restored session for', data.session.user?.email);
-        }
-      }
-    })();
-    return () => { mounted = false; };
-  }, []);
 
-  // 2) Subscribe to changes (SIGNED_IN, TOKEN_REFRESHED, SIGNED_OUT, etc.)
-  useEffect(() => {
-    const { data: sub } = supabase.auth.onAuthStateChange((evt, sess) => {
-      // Helpful logs (you can remove later)
-      const em = sess?.user?.email;
-      console.log('🔐 [auth change]', evt, em || '(no user)');
-      setSession(sess ?? null);
-      setStatus(sess ? 'in' : 'out');
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!mounted) return;
+      setSession(data.session ?? null);
+      setStatus(data.session ? 'in' : 'out');
+    })();
+
+    // Subscribe to auth changes (token refresh, sign in/out)
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession ?? null);
+      setStatus(newSession ? 'in' : 'out');
     });
-    return () => sub.subscription.unsubscribe();
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   const value = useMemo(() => ({ status, session }), [status, session]);
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return <AuthSessionContext.Provider value={value}>{children}</AuthSessionContext.Provider>;
 }
 
-export function useAuth() {
-  return useContext(Ctx);
+export function useAuthSession() {
+  const ctx = useContext(AuthSessionContext);
+  if (!ctx) throw new Error('useAuthSession must be used within AuthSessionProvider');
+  return ctx;
 }

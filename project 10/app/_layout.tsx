@@ -15,7 +15,7 @@ import GlobalFontDefault from '@/components/GlobalFontDefault';
 import { HemisphereProvider } from '@/providers/HemisphereProvider';
 
 // ⬇️ use YOUR file/exports
-import { AuthSessionProvider, useAuthSession } from '@/providers/authSessionProvider';
+import { AuthSessionProvider, useAuthSession } from '@/providers/AuthSessionProvider';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
