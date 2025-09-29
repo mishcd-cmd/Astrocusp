@@ -1,8 +1,10 @@
 // app/_layout.tsx
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import { View, ActivityIndicator, Text, StyleSheet } from 'react-native';
 
+// Fonts
 import {
   useFonts,
   Vazirmatn_400Regular,
@@ -11,9 +13,14 @@ import {
   Vazirmatn_700Bold,
 } from '@expo-google-fonts/vazirmatn';
 
+// Hemisphere provider (no initialHemisphere prop needed)
 import { HemisphereProvider } from '@/providers/HemisphereProvider';
+
+// Global font defaults (the simple component you created earlier)
 import GlobalFontDefault from '@/components/GlobalFontDefault';
-import AuthBootstrap from '@/components/AuthBootstrap';
+
+// Session wait helper
+import { waitForInitialSession } from '@/utils/sessionReady';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -25,19 +32,48 @@ export default function RootLayout() {
     'Vazirmatn-Bold': Vazirmatn_700Bold,
   });
 
-  useEffect(() => {
-    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
-  }, [fontsLoaded]);
+  const [sessionReady, setSessionReady] = useState(false);
 
-  if (!fontsLoaded) return null;
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      try {
+        // ⬇️ Critical: hydrate Supabase session first
+        await waitForInitialSession();
+      } finally {
+        if (isMounted) setSessionReady(true);
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (fontsLoaded && sessionReady) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [fontsLoaded, sessionReady]);
+
+  if (!fontsLoaded || !sessionReady) {
+    // Tiny splash while we load fonts + session
+    return (
+      <View style={styles.boot}>
+        <ActivityIndicator size="large" color="#d4af37" />
+        <Text style={styles.bootText}>Preparing your sky…</Text>
+      </View>
+    );
+  }
 
   return (
-    // ⬅️ removed the `initialHemisphere` prop to match your provider’s type
     <HemisphereProvider>
       <GlobalFontDefault />
-      <AuthBootstrap>
-        <Stack screenOptions={{ headerShown: false, animation: 'fade' }} />
-      </AuthBootstrap>
+      <Stack screenOptions={{ headerShown: false, animation: 'fade' }} />
     </HemisphereProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  boot: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0f1021' },
+  bootText: { marginTop: 10, color: '#8b9dc3', fontFamily: 'Vazirmatn-Regular' },
+});
