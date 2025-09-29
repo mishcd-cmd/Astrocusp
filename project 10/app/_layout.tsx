@@ -20,9 +20,9 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
     'Vazirmatn-Regular': Vazirmatn_400Regular,
-    'Vazirmatn-Medium':  Vazirmatn_500Medium,
+    'Vazirmatn-Medium': Vazirmatn_500Medium,
     'Vazirmatn-SemiBold': Vazirmatn_600SemiBold,
-    'Vazirmatn-Bold':     Vazirmatn_700Bold,
+    'Vazirmatn-Bold': Vazirmatn_700Bold,
   });
 
   useEffect(() => {
@@ -32,7 +32,8 @@ export default function RootLayout() {
   if (!fontsLoaded) return null;
 
   return (
-    <HemisphereProvider initialHemisphere="Northern">
+    // ⬅️ removed the `initialHemisphere` prop to match your provider’s type
+    <HemisphereProvider>
       <GlobalFontDefault />
       <AuthBootstrap>
         <Stack screenOptions={{ headerShown: false, animation: 'fade' }} />
