@@ -17,9 +17,17 @@ import { AuthSessionProvider, useAuthSession } from '@/providers/AuthSessionProv
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-function AuthGate({ children }: { children: React.ReactNode }) {
-  const { loading } = useAuthSession();         // ✅ use loading boolean
-  if (loading) return null;                     // keep splash while auth hydrates
+function AuthGate({ fontsLoaded, children }: { fontsLoaded: boolean; children: React.ReactNode }) {
+  const { status } = useAuthSession(); // 'loading' | 'in' | 'out'
+
+  // Keep splash up until fonts AND auth are ready
+  useEffect(() => {
+    if (fontsLoaded && status !== 'loading') {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [fontsLoaded, status]);
+
+  if (!fontsLoaded || status === 'loading') return null;
   return <>{children}</>;
 }
 
@@ -31,20 +39,14 @@ export default function RootLayout() {
     'Vazirmatn-Bold'   : Vazirmatn_700Bold,
   });
 
-  useEffect(() => {
-    // We hide the splash inside AuthGate once auth is ready,
-    // but we also need fonts first. So only hide when fonts are ready
-    // AND AuthGate has rendered (i.e., not loading).
-    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
-  }, [fontsLoaded]);
-
+  // Do not hide splash here—AuthGate will do it when both are ready
   if (!fontsLoaded) return null;
 
   return (
     <AuthSessionProvider>
       <HemisphereProvider>
         <GlobalFontDefault />
-        <AuthGate>
+        <AuthGate fontsLoaded={fontsLoaded}>
           <Stack screenOptions={{ headerShown: false, animation: 'fade' }} />
         </AuthGate>
       </HemisphereProvider>

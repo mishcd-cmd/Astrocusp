@@ -2,103 +2,70 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/utils/supabase';
 
-type Session = NonNullable<Awaited<ReturnType<typeof supabase.auth.getSession>>['data']['session']> | null;
-
+type Status = 'loading' | 'in' | 'out';
 type Ctx = {
-  session: Session;
-  user: Session['user'] | null;
-  loading: boolean;
+  status: Status;
+  user: import('@supabase/supabase-js').User | null;
 };
 
-const AuthSessionContext = createContext<Ctx>({ session: null, user: null, loading: true });
-
-const STORAGE_KEY = 'astro-cusp-auth-session'; // must match utils/supabase.ts
+const AuthCtx = createContext<Ctx>({ status: 'loading', user: null });
 
 export function AuthSessionProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<Session>(null);
-  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState<Status>('loading');
+  const [user, setUser] = useState<Ctx['user']>(null);
 
-  // Restore on mount
   useEffect(() => {
     let mounted = true;
-    (async () => {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) {
-        console.warn('[auth] getSession error:', error.message);
-      }
+
+    // 1) Bootstrap from current session (from localStorage/AsyncStorage)
+    supabase.auth.getSession().then(({ data, error }) => {
+      const hasUser = !!data?.session?.user;
       if (!mounted) return;
-
-      setSession(data.session ?? null);
-      setLoading(false);
-
-      // 🔁 Mirror to localStorage so it survives reloads (Supabase already uses storage,
-      // but this helps keep things in sync if you ever swap storage backends).
-      if (typeof window !== 'undefined') {
-        try {
-          if (data.session) {
-            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data.session));
-          } else {
-            // DO NOT remove the key on INITIAL load; leaving the old value doesn’t hurt
-            // and avoids “flash-logout” if getSession is late. We only overwrite on events below.
-          }
-        } catch {}
-      }
-    })();
-
-    // Live updates
-    const { data: sub } = supabase.auth.onAuthStateChange((event, sess) => {
-      console.log('🔐 [supabase] auth state:', event, sess?.user?.email);
-      // IMPORTANT: never sign out on INITIAL_SESSION
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
-        setSession(sess ?? null);
-        if (typeof window !== 'undefined') {
-          try {
-            if (sess) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(sess));
-          } catch {}
-        }
-      } else if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
-        setSession(null);
-        if (typeof window !== 'undefined') {
-          try {
-            window.localStorage.removeItem(STORAGE_KEY);
-          } catch {}
-        }
-      }
+      setUser(hasUser ? data!.session!.user! : null);
+      setStatus(hasUser ? 'in' : 'out');
+      console.log('🔐 [auth] bootstrap', { hasUser, event: 'getSession' });
     });
 
-    // Refresh on tab visibility resume (helps long-lived tabs)
-    const onVis = async () => {
-      if (document.visibilityState === 'visible') {
-        const { data } = await supabase.auth.getSession();
-        setSession(data.session ?? null);
+    // 2) Subscribe to auth changes. Treat INITIAL_SESSION as “in” when a user exists.
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      const hasUser = !!session?.user;
+      console.log('🔐 [auth] event', event, hasUser ? session!.user!.email : null);
+
+      switch (event) {
+        case 'SIGNED_IN':
+        case 'TOKEN_REFRESHED':
+          setUser(session?.user ?? null);
+          setStatus(session?.user ? 'in' : 'out');
+          break;
+        case 'INITIAL_SESSION':
+          // IMPORTANT: count this as signed in if a user exists
+          setUser(session?.user ?? null);
+          setStatus(session?.user ? 'in' : 'out');
+          break;
+        case 'SIGNED_OUT':
+          setUser(null);
+          setStatus('out');
+          break;
+        case 'USER_UPDATED':
+          setUser(session?.user ?? null);
+          setStatus(session?.user ? 'in' : 'out');
+          break;
+        default:
+          // keep current but ensure we never stay stuck on loading
+          if (status === 'loading') setStatus(hasUser ? 'in' : 'out');
       }
-    };
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', onVis);
-    }
+    });
 
     return () => {
       mounted = false;
       sub?.subscription?.unsubscribe();
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', onVis);
-      }
     };
-  }, []);
+  }, []); // eslint-disable-line
 
-  const value = useMemo<Ctx>(() => ({
-    session,
-    user: session?.user ?? null,
-    loading,
-  }), [session, loading]);
-
-  return (
-    <AuthSessionContext.Provider value={value}>
-      {children}
-    </AuthSessionContext.Provider>
-  );
+  const value = useMemo(() => ({ status, user }), [status, user]);
+  return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }
 
 export function useAuthSession() {
-  return useContext(AuthSessionContext);
+  return useContext(AuthCtx);
 }
