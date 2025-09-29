@@ -2,51 +2,103 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/utils/supabase';
 
-// Simple cross-platform storage (uses AsyncStorage on native, localStorage on web)
-type Session = Awaited<ReturnType<typeof supabase.auth.getSession>>['data']['session'];
-
-type Status = 'loading' | 'in' | 'out';
+type Session = NonNullable<Awaited<ReturnType<typeof supabase.auth.getSession>>['data']['session']> | null;
 
 type Ctx = {
-  status: Status;
-  session: Session | null;
+  session: Session;
+  user: Session['user'] | null;
+  loading: boolean;
 };
 
-const AuthSessionContext = createContext<Ctx | undefined>(undefined);
+const AuthSessionContext = createContext<Ctx>({ session: null, user: null, loading: true });
+
+const STORAGE_KEY = 'astro-cusp-auth-session'; // must match utils/supabase.ts
 
 export function AuthSessionProvider({ children }: { children: React.ReactNode }) {
-  const [status, setStatus] = useState<Status>('loading');
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<Session>(null);
+  const [loading, setLoading] = useState(true);
 
-  // On first mount: restore session
+  // Restore on mount
   useEffect(() => {
     let mounted = true;
-
     (async () => {
-      const { data } = await supabase.auth.getSession();
+      const { data, error } = await supabase.auth.getSession();
+      if (error) {
+        console.warn('[auth] getSession error:', error.message);
+      }
       if (!mounted) return;
+
       setSession(data.session ?? null);
-      setStatus(data.session ? 'in' : 'out');
+      setLoading(false);
+
+      // 🔁 Mirror to localStorage so it survives reloads (Supabase already uses storage,
+      // but this helps keep things in sync if you ever swap storage backends).
+      if (typeof window !== 'undefined') {
+        try {
+          if (data.session) {
+            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data.session));
+          } else {
+            // DO NOT remove the key on INITIAL load; leaving the old value doesn’t hurt
+            // and avoids “flash-logout” if getSession is late. We only overwrite on events below.
+          }
+        } catch {}
+      }
     })();
 
-    // Subscribe to auth changes (token refresh, sign in/out)
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession ?? null);
-      setStatus(newSession ? 'in' : 'out');
+    // Live updates
+    const { data: sub } = supabase.auth.onAuthStateChange((event, sess) => {
+      console.log('🔐 [supabase] auth state:', event, sess?.user?.email);
+      // IMPORTANT: never sign out on INITIAL_SESSION
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        setSession(sess ?? null);
+        if (typeof window !== 'undefined') {
+          try {
+            if (sess) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(sess));
+          } catch {}
+        }
+      } else if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
+        setSession(null);
+        if (typeof window !== 'undefined') {
+          try {
+            window.localStorage.removeItem(STORAGE_KEY);
+          } catch {}
+        }
+      }
     });
+
+    // Refresh on tab visibility resume (helps long-lived tabs)
+    const onVis = async () => {
+      if (document.visibilityState === 'visible') {
+        const { data } = await supabase.auth.getSession();
+        setSession(data.session ?? null);
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVis);
+    }
 
     return () => {
       mounted = false;
-      sub.subscription.unsubscribe();
+      sub?.subscription?.unsubscribe();
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVis);
+      }
     };
   }, []);
 
-  const value = useMemo(() => ({ status, session }), [status, session]);
-  return <AuthSessionContext.Provider value={value}>{children}</AuthSessionContext.Provider>;
+  const value = useMemo<Ctx>(() => ({
+    session,
+    user: session?.user ?? null,
+    loading,
+  }), [session, loading]);
+
+  return (
+    <AuthSessionContext.Provider value={value}>
+      {children}
+    </AuthSessionContext.Provider>
+  );
 }
 
 export function useAuthSession() {
-  const ctx = useContext(AuthSessionContext);
-  if (!ctx) throw new Error('useAuthSession must be used within AuthSessionProvider');
-  return ctx;
+  return useContext(AuthSessionContext);
 }

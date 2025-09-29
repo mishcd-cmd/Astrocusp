@@ -1,4 +1,4 @@
-// app/_layout.tsx 
+// app/_layout.tsx
 import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -13,31 +13,32 @@ import {
 
 import GlobalFontDefault from '@/components/GlobalFontDefault';
 import { HemisphereProvider } from '@/providers/HemisphereProvider';
-
-// ⬇️ use YOUR file/exports
 import { AuthSessionProvider, useAuthSession } from '@/providers/AuthSessionProvider';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function AuthGate({ children }: { children: React.ReactNode }) {
-  const { status } = useAuthSession(); // expect 'loading' | 'in' | 'out'
-  if (status === 'loading') return null;
+  const { loading } = useAuthSession();         // ✅ use loading boolean
+  if (loading) return null;                     // keep splash while auth hydrates
   return <>{children}</>;
 }
 
 export default function RootLayout() {
-  const [loaded] = useFonts({
+  const [fontsLoaded] = useFonts({
     'Vazirmatn-Regular': Vazirmatn_400Regular,
-    'Vazirmatn-Medium': Vazirmatn_500Medium,
+    'Vazirmatn-Medium' : Vazirmatn_500Medium,
     'Vazirmatn-SemiBold': Vazirmatn_600SemiBold,
-    'Vazirmatn-Bold': Vazirmatn_700Bold,
+    'Vazirmatn-Bold'   : Vazirmatn_700Bold,
   });
 
   useEffect(() => {
-    if (loaded) SplashScreen.hideAsync().catch(() => {});
-  }, [loaded]);
+    // We hide the splash inside AuthGate once auth is ready,
+    // but we also need fonts first. So only hide when fonts are ready
+    // AND AuthGate has rendered (i.e., not loading).
+    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
+  }, [fontsLoaded]);
 
-  if (!loaded) return null;
+  if (!fontsLoaded) return null;
 
   return (
     <AuthSessionProvider>
