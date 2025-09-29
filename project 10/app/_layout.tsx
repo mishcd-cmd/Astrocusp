@@ -1,4 +1,4 @@
-// app/_layout.tsx
+// app/_layout.tsx 
 import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
