@@ -1,4 +1,4 @@
-import React from 'react';
+import React from 'react'; 
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { getBirthstoneInfo, getEnhancedZodiacInfo, getAstrologicalHouse } from '@/utils/zodiacData';
 import { LinearGradient } from 'expo-linear-gradient';
