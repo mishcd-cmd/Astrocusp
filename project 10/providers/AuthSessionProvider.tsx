@@ -1,71 +1,73 @@
 // providers/AuthSessionProvider.tsx
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useMemo } from 'react';
 import { supabase } from '@/utils/supabase';
 
 type Status = 'loading' | 'in' | 'out';
+
 type Ctx = {
   status: Status;
-  user: import('@supabase/supabase-js').User | null;
+  userEmail?: string | null;
 };
 
-const AuthCtx = createContext<Ctx>({ status: 'loading', user: null });
+const AuthSessionCtx = createContext<Ctx>({ status: 'loading', userEmail: null });
 
 export function AuthSessionProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<Status>('loading');
-  const [user, setUser] = useState<Ctx['user']>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
+  // 1) Bootstrap from storage synchronously on mount
   useEffect(() => {
-    let mounted = true;
+    let cancelled = false;
 
-    // 1) Bootstrap from current session (from localStorage/AsyncStorage)
-    supabase.auth.getSession().then(({ data, error }) => {
-      const hasUser = !!data?.session?.user;
-      if (!mounted) return;
-      setUser(hasUser ? data!.session!.user! : null);
-      setStatus(hasUser ? 'in' : 'out');
-      console.log('🔐 [auth] bootstrap', { hasUser, event: 'getSession' });
-    });
-
-    // 2) Subscribe to auth changes. Treat INITIAL_SESSION as “in” when a user exists.
-    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      const hasUser = !!session?.user;
-      console.log('🔐 [auth] event', event, hasUser ? session!.user!.email : null);
-
-      switch (event) {
-        case 'SIGNED_IN':
-        case 'TOKEN_REFRESHED':
-          setUser(session?.user ?? null);
-          setStatus(session?.user ? 'in' : 'out');
-          break;
-        case 'INITIAL_SESSION':
-          // IMPORTANT: count this as signed in if a user exists
-          setUser(session?.user ?? null);
-          setStatus(session?.user ? 'in' : 'out');
-          break;
-        case 'SIGNED_OUT':
-          setUser(null);
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      const session = data.session;
+      if (!cancelled) {
+        if (session?.user) {
+          setStatus('in');
+          setUserEmail(session.user.email ?? null);
+        } else {
           setStatus('out');
-          break;
-        case 'USER_UPDATED':
-          setUser(session?.user ?? null);
-          setStatus(session?.user ? 'in' : 'out');
-          break;
-        default:
-          // keep current but ensure we never stay stuck on loading
-          if (status === 'loading') setStatus(hasUser ? 'in' : 'out');
+          setUserEmail(null);
+        }
+      }
+    })();
+
+    // 2) Subscribe to future changes (sign-in/out, refresh)
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      // Helpful logs (optional)
+      const email = session?.user?.email ?? null;
+      console.log('🔐 [auth] event', event, email || '');
+
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        setStatus('in');
+        setUserEmail(email);
+      } else if (event === 'SIGNED_OUT') {
+        setStatus('out');
+        setUserEmail(null);
+      } else if (event === 'INITIAL_SESSION') {
+        // This fires on load; we already handled getSession above.
+        if (session?.user) {
+          setStatus('in');
+          setUserEmail(email);
+        } else {
+          setStatus('out');
+          setUserEmail(null);
+        }
       }
     });
 
     return () => {
-      mounted = false;
-      sub?.subscription?.unsubscribe();
+      cancelled = true;
+      sub?.subscription.unsubscribe();
     };
-  }, []); // eslint-disable-line
+  }, []);
 
-  const value = useMemo(() => ({ status, user }), [status, user]);
-  return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
+  const value = useMemo(() => ({ status, userEmail }), [status, userEmail]);
+
+  return <AuthSessionCtx.Provider value={value}>{children}</AuthSessionCtx.Provider>;
 }
 
 export function useAuthSession() {
-  return useContext(AuthCtx);
+  return useContext(AuthSessionCtx);
 }
