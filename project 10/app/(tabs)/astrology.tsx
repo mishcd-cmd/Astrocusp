@@ -45,8 +45,6 @@ import { useHemisphere } from '../../providers/HemisphereProvider';
 import HemisphereToggle from '../../components/HemisphereToggle';
 import { getAstrologicalHouse } from '../../utils/zodiacData';
 
-import DailyReadings from '../../components/DailyReadings';
-
 /* -------------------------
  * Safe string helpers
  * ------------------------- */
@@ -609,11 +607,7 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          <DailyReadings
-            primarySign={effectiveSign || null}
-            hemisphere={resolvedHemisphere}
-            serviceDateUTC={serviceDateUTC.toISOString()}
-          />
+          
 
           {!hasAccess && (
             <LinearGradient colors={['rgba(212, 175, 55, 0.2)', 'rgba(212, 175, 55, 0.1)']} style={styles.upgradeCard}>
