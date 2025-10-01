@@ -2,29 +2,28 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "target": "ES2020",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
+    "lib": ["ES2020", "DOM"],
     "jsx": "react-jsx",
-
     "strict": true,
-    "noImplicitOverride": true,
-    "noUncheckedIndexedAccess": false,
-
+    "moduleResolution": "bundler",
     "baseUrl": ".",
     "paths": {
       "@/*": ["./*"]
     },
-
-    "types": ["react", "react-dom", "react-native", "node"],
-
-    "skipLibCheck": true,
-    "allowSyntheticDefaultImports": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "forceConsistentCasingInFileNames": true,
-
-    "lib": ["ES2020", "DOM"]
+    "types": ["node", "react"],  // ⬅️ removed "react-native"
+    "typeRoots": ["./types", "./node_modules/@types"],
+    "skipLibCheck": true
   },
-  "include": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
-  "exclude": ["node_modules", "dist", "build"]
+  "include": [
+    "app",
+    "components",
+    "providers",
+    "utils",
+    "types",
+    "scripts",
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": ["node_modules"]
 }
+

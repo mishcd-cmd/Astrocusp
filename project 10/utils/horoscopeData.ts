@@ -1,211 +1,169 @@
 // utils/horoscopeData.ts
 import { supabase } from './supabase';
-import { getSubscriptionStatus } from './billing';
-import { getCuspGemstoneAndRitual } from './cuspData';
-import { getDailyForecast, type DailyRow } from './daily';
 
-// Types
-export interface HoroscopeData {
-  daily: string;
+export type HoroscopeData = {
+  date: string;
+  sign: string;
+  hemisphere: 'Northern' | 'Southern' | 'NH' | 'SH';
+  daily?: string;
   affirmation?: string;
-  mysticOpening?: string;
-  celestialInsight?: string;
   deeper?: string;
-  monthlyForecast?: string;
-  cuspGemstone?: {
-    gemstone: string;
-    meaning: string;
-    ritualTitle?: string;
-    ritualDescription?: string;
-  };
-  hasAccess: boolean;
+  celestialInsight?: string;
+};
+
+// ---------- normalization helpers ----------
+
+function norm(s: string) {
+  return (s || '')
+    .toLowerCase()
+    .trim()
+    .replace(/–|—/g, '-')            // all dashes -> hyphen
+    .replace(/\s+/g, ' ')            // collapse spaces
+    .replace(/\s*-\s*/g, '-')        // tighten hyphen spacing
+    .replace(/\s*cusp.*$/i, ' cusp') // normalize any cusp suffix to " cusp"
+    .trim();
 }
 
-type Hemisphere = 'Northern' | 'Southern';
+function isCuspLabel(label: string) {
+  return /cusp/i.test(label || '');
+}
 
-const DAY = (d: Date) => d.toISOString().slice(0, 10);
+/** Build robust aliases for a requested sign (cusp or pure). */
+function buildAliases(inputSign: string): string[] {
+  const raw = (inputSign || '').trim();
 
-// ---------- PUBLIC API: combine Daily + Monthly from horoscope_cache ----------
+  // Remove “cusp” word for splitting, but still produce aliases with it
+  const base = raw.replace(/\s*cusp.*$/i, '').trim();
+  const parts = base.split(/\s*[-–—]\s*/);
+
+  const out = new Set<string>();
+
+  if (parts.length === 2) {
+    // CUSP variants
+    const a = parts[0]?.trim();
+    const b = parts[1]?.trim();
+
+    // with explicit "cusp"
+    out.add(norm(`${a}-${b} cusp`));
+    out.add(norm(`${a}–${b} cusp`));
+    out.add(norm(`${a} ${b} cusp`));
+
+    // without the word “cusp”
+    out.add(norm(`${a}-${b}`));
+    out.add(norm(`${a}–${b}`));
+    out.add(norm(`${a} ${b}`));
+
+    // ultra-defensive
+    out.add(norm(`${a} & ${b} cusp`));
+  } else {
+    // PURE sign
+    out.add(norm(raw));                 // exact (case-insensitive)
+    out.add(norm(base));                // base without any cusp mention
+    out.add(norm(`${base} (pure)`));    // rare editorial suffix
+  }
+
+  return Array.from(out);
+}
+
+/** Hemisphere variants: accept both long and short forms */
+function hemisphereAliases(h: string) {
+  const v = (h || '').toLowerCase();
+  if (v.startsWith('n')) return ['Northern', 'NH', 'north', 'N'];
+  if (v.startsWith('s')) return ['Southern', 'SH', 'south', 'S'];
+  // default to both if unknown
+  return ['Northern', 'NH', 'Southern', 'SH'];
+}
+
+function pickBestRow(rows: any[], requestedSign: string): any | null {
+  const aliases = buildAliases(requestedSign);
+  const wantCusp = isCuspLabel(requestedSign);
+
+  // Pre-normalize row signs (DB may store ALL CAPS or odd dash spacing)
+  const augmented = rows.map(r => ({
+    row: r,
+    normSign: norm(r.sign || ''),
+    isCusp: isCuspLabel(r.sign || ''),
+  }));
+
+  // 1) Try exact alias matches
+  for (const a of aliases) {
+    const hit = augmented.find(x => x.normSign === a);
+    if (hit) return hit.row;
+  }
+
+  if (wantCusp) {
+    // 2) If user requested a cusp:
+    // If ANY cusp rows exist for this date+hemisphere set, don't show a pure sign by mistake
+    const anyCusps = augmented.some(x => x.isCusp);
+    if (anyCusps) return null;
+
+    // 3) Else, gracefully fall back to the *first* part of the cusp
+    const first = requestedSign
+      .replace(/\s*cusp.*$/i, '')
+      .split(/\s*[-–—]\s*/)[0]
+      ?.trim();
+    if (first) {
+      const pureAlias = norm(first);
+      const hit = augmented.find(x => x.normSign === pureAlias);
+      if (hit) return hit.row;
+    }
+  }
+
+  // 4) Pure sign requested but no exact match—give up
+  return null;
+}
+
+function isoDateOnly(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
+// ---------- public API ----------
+
+/**
+ * Robust daily fetch that:
+ *  - accepts hemisphere as 'Northern' | 'Southern' | 'NH' | 'SH'
+ *  - queries both long/short hemisphere forms to match your table
+ *  - normalizes ALL CAPS signs and cusp variants
+ */
 export async function getAccessibleHoroscope(
   date: Date,
   sign: string,
-  hemisphere: Hemisphere
-): Promise<HoroscopeData> {
-  const dateStr = DAY(date);
+  hemisphereInput: 'Northern' | 'Southern' | 'NH' | 'SH'
+): Promise<HoroscopeData | null> {
+  const day = isoDateOnly(date);
+  const hemiChoices = hemisphereAliases(hemisphereInput); // e.g. ['Northern','NH']
 
-  console.log('🔍 [horoscope] getAccessibleHoroscope called with:', {
-    date: dateStr,
-    sign,
-    hemisphere,
-    signType: sign.includes('Cusp') ? 'cusp' : 'pure',
-    signLength: sign.length,
-    signChars: sign.split('').map(c => c.charCodeAt(0))
-  });
+  // Pull all potential matches for this date across the accepted hemisphere variants.
+  // (Small result set, then we pick the single best row client-side.)
+  const { data, error } = await supabase
+    .from('astrology_cache')
+    .select('date, hemisphere, sign, daily_horoscope, affirmation, deeper_insight, celestial_insight')
+    .eq('date', day)
+    .in('hemisphere', hemiChoices as any); // match both 'Northern' & 'NH' (or Southern/SH)
 
-  // CRITICAL: Don't proceed if no valid sign provided
-  if (!sign || sign.trim() === '') {
-    console.error('❌ [horoscope] No valid sign provided to getAccessibleHoroscope');
-    return {
-      daily: 'Please complete your cosmic profile to see your personalized horoscope.',
-      hasAccess: false,
-    };
+  if (error) {
+    console.error('[daily] Supabase error:', error.message);
+    return null;
+  }
+  if (!data || data.length === 0) {
+    // Nothing for that date/hemisphere
+    return null;
   }
 
-  // 1) subscription
-  const sub = await getSubscriptionStatus();
-  const hasAccess = !!sub.active;
+  // Try to pick the exact cusp/pure row
+  const row = pickBestRow(data, sign);
+  if (!row) return null;
 
-  console.log('🔍 [horoscope] Subscription status:', {
-    active: sub.active,
-    source: sub.source,
-    status: sub.status,
-    reason: sub.reason
-  });
-
-  // 2) Use the new daily fetching logic with debug enabled
-  console.log('🔍 [horoscope] Fetching daily data using new logic...');
-  const dailyData = await getDailyForecast(sign, hemisphere, {
-    userId: undefined, // Could pass user ID for user-specific caching
-    forceDate: dateStr,
-    debug: true, // Enable debug logging
-    useCache: false // Force fresh fetch from database
-  });
-
-  console.log('🔍 [horoscope] Daily data result:', {
-    found: !!dailyData,
-    sign: dailyData?.sign,
-    hemisphere: dailyData?.hemisphere,
-    date: dailyData?.date,
-    hasDaily: !!dailyData?.daily_horoscope,
-    dailyPreview: dailyData?.daily_horoscope?.substring(0, 100) + '...'
-  });
-
-  if (!dailyData) {
-    console.warn('⚠️ [horoscope] No daily data found for:', { sign, hemisphere, date: dateStr });
-  }
-
-  // 3) cusp extras (premium)
-  let cuspGemstone = undefined;
-  if (hasAccess && sign.includes('Cusp')) {
-    try {
-      cuspGemstone = await getCuspGemstoneAndRitual(sign);
-    } catch (e) {
-      console.warn('⚠️ [horoscope] Gemstone fetch failed (non-fatal):', e);
-    }
-  }
-
-  // 4) assemble
-  if (dailyData) {
-    const payload: HoroscopeData = {
-      daily: dailyData.daily_horoscope,
-      affirmation: hasAccess ? dailyData.affirmation : undefined,
-      deeper: hasAccess ? dailyData.deeper_insight : undefined,
-      cuspGemstone,
-      hasAccess,
-    };
-
-    console.log('✅ [horoscope] Built payload', {
-      hasDaily: !!payload.daily,
-      hasAffirmation: !!payload.affirmation,
-      hasDeeper: !!payload.deeper,
-      hemi: hemisphere,
-      sign,
-      hasAccess
-    });
-    return payload;
-  }
-
-  // 5) fallback
-  console.warn('⚠️ [horoscope] No data found in horoscope_cache for', { sign, hemisphere, date: dateStr }, 'using fallback');
-  const fallback = generateFallbackHoroscope(sign, hasAccess, cuspGemstone, undefined, hemisphere);
-  return fallback;
-}
-
-// ---------- Fallback (unchanged except for typings) ----------
-function generateFallbackHoroscope(
-  sign: string,
-  hasAccess: boolean,
-  cuspGemstone?: any,
-  monthlyForecast?: string,
-  hemisphere?: Hemisphere
-): HoroscopeData {
-  // Northern Hemisphere horoscopes (summer energy in August/September)
-  const northernHoroscopes: Record<string, string> = {
-    Aries: 'The stars spark your flame — today, burn bold and leave a trail of stardust.',
-    Taurus: "Trust the rhythm of life — it's setting the pace for you today.",
-    Gemini: 'Your words flirt before your thoughts catch up — today, let charm take the wheel.',
-    Cancer: 'Let the tides pull your intuition forward — your inner moon knows the truth.',
-    Leo: 'The world is your mirror today—strut through it like the masterpiece you are.',
-    Virgo: 'Your mind is a garden — pull the weeds of doubt.',
-    Libra: 'Balance the bold and the gentle — both live in you.',
-    Scorpio: 'Secrets stir just beneath the surface—trust your hunches.',
-    Sagittarius: 'A restless whisper moves through you — chase what excites.',
-    Capricorn: 'You are the architect of the day — build with intention.',
-    Aquarius: 'Crack open your wildest idea — today might just believe in it.',
-    Pisces: "Don't rush the harvest — you've planted moonlight.",
-    'Aries-Taurus': 'Summer fire meets earth — your passionate nature finds grounding in the season\'s abundance.',
-    'Aries–Taurus': 'Summer fire meets earth — your passionate nature finds grounding in the season\'s abundance.',
-    'Aries–Taurus Cusp': 'Summer fire meets earth — your passionate nature finds grounding in the season\'s abundance.',
-  };
-
-  // Southern Hemisphere horoscopes (winter energy in August/September)
-  const southernHoroscopes: Record<string, string> = {
-    Aries: 'Winter fire burns within — your inner flame guides you through the darker months.',
-    Taurus: "Winter's embrace brings grounding energy — build security through steady progress.",
-    Gemini: 'Winter conversations spark new ideas — connect and communicate from your cozy space.',
-    Cancer: 'Winter nesting calls to your soul — create warmth and emotional security at home.',
-    Leo: 'Your inner radiance shines brightest in winter — warm others with your presence.',
-    Virgo: 'Winter organization brings clarity — perfect time for planning and systematic improvements.',
-    Libra: 'Winter balance creates harmony — beautify your living space and relationships.',
-    Scorpio: 'Winter depths support transformation — use this introspective time for growth.',
-    Sagittarius: 'Winter wisdom expands your mind — explore philosophy and spiritual learning.',
-    Capricorn: 'Winter discipline builds foundations — focus on long-term goals and achievements.',
-    Aquarius: 'Winter innovation sparks creativity — connect with progressive causes and ideas.',
-    Pisces: 'Winter dreams deepen intuition — perfect time for meditation and artistic expression.',
-    'Aries-Taurus': 'Winter fire meets earth — your passionate nature finds grounding in the season\'s stillness.',
-    'Aries–Taurus': 'Winter fire meets earth — your passionate nature finds grounding in the season\'s stillness.',
-    'Aries–Taurus Cusp': 'Winter fire meets earth — your passionate nature finds grounding in the season\'s stillness.',
-  };
-
-  console.log('🔍 [fallback] Generating fallback horoscope for:', { sign, hemisphere });
-  
-  // CRITICAL FIX: Use the correct hemisphere to select the right horoscope set
-  const horoscopes = hemisphere === 'Southern' ? southernHoroscopes : northernHoroscopes;
-  
-  console.log('🔍 [fallback] Using horoscopes for:', hemisphere, 'hemisphere');
-
-  let daily = horoscopes[sign];
-  if (!daily && sign.includes('Cusp')) {
-    const parts = sign.replace(/[–—]/g, '-').split('-').map((p) => p.trim());
-    if (parts.length >= 1) {
-      daily = horoscopes[parts[0]] || 'The stars have special guidance for you today.';
-    }
-  }
-  if (!daily && sign.includes('Cusp')) {
-    const normalized = sign.replace(/\s*cusp.*$/i, '').replace(/[–—]/g, '-').trim();
-    daily = horoscopes[normalized] || horoscopes[sign] || 'The stars have special guidance for you today.';
-  }
-  if (!daily) {
-    console.warn('⚠️ [horoscope] No fallback horoscope found for sign:', sign);
-    daily = 'The stars have special guidance for you today.';
-  }
-
-  console.log('✅ [fallback] Selected horoscope:', { sign, hemisphere, daily: daily.substring(0, 50) + '...' });
-  
   return {
-    daily,
-    affirmation: hasAccess
-      ? (hemisphere === 'Southern'
-          ? 'I embrace the winter wisdom flowing through my cosmic nature.'
-          : 'I trust the cosmic forces guiding my path today.')
-      : undefined,
-    deeper: hasAccess
-      ? (hemisphere === 'Southern'
-          ? 'Winter energy supports deep inner work and meaningful connections. Use this introspective time for profound growth.'
-          : 'Today supports deep reflection and meaningful connections. Follow your intuition.')
-      : undefined,
-    monthlyForecast,
-    cuspGemstone,
-    hasAccess,
+    date: row.date,
+    sign: row.sign,
+    hemisphere: row.hemisphere,
+    daily: row.daily_horoscope ?? '',
+    affirmation: row.affirmation ?? '',
+    deeper: row.deeper_insight ?? '',
+    celestialInsight: row.celestial_insight ?? '',
   };
 }
