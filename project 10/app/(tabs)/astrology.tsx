@@ -37,7 +37,6 @@ import {
   getHemisphereEvents,
   getCurrentPlanetaryPositionsEnhanced,
   getVisibleConstellationsEnhanced,
-  // ❌ removed getSpaceHighlights / SpaceHighlights (not exported in your utils/astronomy)
 } from '../../utils/astronomy';
 import { getLunarNow } from '../../utils/lunar';
 import { getCuspGemstoneAndRitual } from '../../utils/cuspData';
@@ -46,7 +45,6 @@ import { useHemisphere } from '../../providers/HemisphereProvider';
 import HemisphereToggle from '../../components/HemisphereToggle';
 import { getAstrologicalHouse } from '../../utils/zodiacData';
 
-// ✅ DailyReadings (already placed)
 import DailyReadings from '../../components/DailyReadings';
 
 /* -------------------------
@@ -63,8 +61,6 @@ function stripVersionSuffix(v?: string) {
 /* -------------------------
  * Date helpers (fix stale daily content)
  * ------------------------- */
-// Returns a Date set to **UTC midnight** for the user's **local** calendar day.
-// This makes lookups deterministic per local day, regardless of timezone.
 function getUTCMidnightForLocalDay(localNow = new Date()): Date {
   const y = localNow.getFullYear();
   const m = localNow.getMonth();
@@ -72,14 +68,12 @@ function getUTCMidnightForLocalDay(localNow = new Date()): Date {
   return new Date(Date.UTC(y, m, d, 0, 0, 0, 0));
 }
 
-// Milliseconds until next local midnight
 function msUntilNextLocalMidnight(now = new Date()): number {
   const next = new Date(now);
   next.setHours(24, 0, 0, 0);
   return next.getTime() - now.getTime();
 }
 
-/** Build a minimal "user" shape for utils/daily.getAccessibleHoroscope */
 function buildDailyUser(base: any, signLabel: string, hemi: 'Northern' | 'Southern') {
   const isCusp = /\bcusp\b/i.test(signLabel);
   return {
@@ -96,12 +90,10 @@ export default function AstrologyScreen() {
   const params = useLocalSearchParams<{ sign?: string; hemisphere?: string }>();
   const { hemisphere: contextHemisphere } = useHemisphere();
 
-  // ----- internal guards -----
   const initOnce = useRef(false);
   const inFlight = useRef(false);
   const lastSubCheck = useRef<number>(0);
 
-  // ----- state -----
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -109,7 +101,6 @@ export default function AstrologyScreen() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [hasAccess, setHasAccess] = useState<boolean>(false);
 
-  // Daily content (from utils/daily → horoscope_cache)
   const [daily, setDaily] = useState<{
     date?: string;
     sign?: string;
@@ -121,7 +112,6 @@ export default function AstrologyScreen() {
 
   const [error, setError] = useState<string | null>(null);
 
-  // UI state
   const [selectedSign, setSelectedSign] = useState<string>('');
   const [selectedHemisphere, setSelectedHemisphere] = useState<'Northern' | 'Southern'>('Northern');
   const [moonPhase, setMoonPhase] = useState<any>(null);
@@ -131,10 +121,8 @@ export default function AstrologyScreen() {
   const [currentLanguage, setCurrentLanguage] = useState<SupportedLanguage>('en');
   const [translatedContent, setTranslatedContent] = useState<any>({});
 
-  // Tick that flips at local midnight to force refresh
   const [dayTick, setDayTick] = useState(0);
 
-  // Resolve header values (fast)
   const resolvedSign = useMemo(() => {
     if (params.sign) {
       const decoded = decodeURIComponent(asString(params.sign));
@@ -157,14 +145,12 @@ export default function AstrologyScreen() {
     return resolvedSign || selectedSign || '';
   }, [resolvedSign, selectedSign]);
 
-  // The **service date** we align to (UTC midnight for today's local date)
   const serviceDateUTC = useMemo(() => {
     const d = getUTCMidnightForLocalDay();
     console.log('📅 [astrology] serviceDateUTC →', d.toISOString());
     return d;
   }, [dayTick]);
 
-  // Hemisphere-safe filter: hide Southern-only landmarks on Northern
   const filteredEvents = useMemo(() => {
     const southernOnly = /(southern\s*cross|magellanic\s*clouds|carina\s*nebula)/i;
     if (resolvedHemisphere === 'Northern') {
@@ -175,21 +161,25 @@ export default function AstrologyScreen() {
     return astronomicalEvents || [];
   }, [astronomicalEvents, resolvedHemisphere]);
 
-  // Refetch daily + constellations when hemisphere/sign changes (and after init ready)
   useEffect(() => {
     if (!effectiveSign || !ready) return;
     let cancelled = false;
     (async () => {
       try {
-        // Build a synthetic "user" for daily.ts
         const dailyUser = buildDailyUser(user, effectiveSign, resolvedHemisphere);
         const d = await getDailyAccessible(dailyUser, {
           useCache: true,
-          debug: true, // keep for now; set false to quiet logs
+          debug: true,
         });
+        
+        // 🔍 DEBUG LOGS ADDED HERE
+        console.log('🔍 [astrology] Daily data received:', d);
+        console.log('🔍 [astrology] daily.daily value:', d?.daily);
+        console.log('🔍 [astrology] daily.affirmation value:', d?.affirmation);
+        console.log('🔍 [astrology] daily.deeper value:', d?.deeper);
+        
         if (!cancelled) setDaily(d || null);
 
-        // refresh constellations on hemisphere change
         try {
           const consts = await getVisibleConstellationsEnhanced(resolvedHemisphere);
           if (!cancelled) setVisibleConstellations(consts || []);
@@ -205,14 +195,12 @@ export default function AstrologyScreen() {
     };
   }, [effectiveSign, resolvedHemisphere, ready, serviceDateUTC, user]);
 
-  // Auto flip dayTick at **local midnight** so content rolls to the new day
   useEffect(() => {
     const ms = msUntilNextLocalMidnight();
     const t = setTimeout(() => setDayTick(tick => tick + 1), ms + 1000);
     return () => clearTimeout(t);
   }, [dayTick]);
 
-  // Also refetch when the screen regains focus (e.g. app slept overnight)
   useFocusEffect(
     useCallback(() => {
       if (ready) {
@@ -221,7 +209,6 @@ export default function AstrologyScreen() {
     }, [ready, effectiveSign, resolvedHemisphere, serviceDateUTC])
   );
 
-  // ----- one-time init effect -----
   useEffect(() => {
     if (initOnce.current) return;
     initOnce.current = true;
@@ -237,7 +224,6 @@ export default function AstrologyScreen() {
       try {
         console.log('🚀 [astrology] Starting one-time init...');
 
-        // ensure auth
         try {
           await getUserData();
         } catch (authError: any) {
@@ -266,7 +252,6 @@ export default function AstrologyScreen() {
           return same ? prev : u;
         });
 
-        // Throttled subscription check (2 min)
         const now = Date.now();
         if (now - lastSubCheck.current > 120_000) {
           lastSubCheck.current = now;
@@ -274,7 +259,6 @@ export default function AstrologyScreen() {
           if (!cancelled) setHasAccess(!!sub?.active);
         }
 
-        // Compute sign + hemisphere
         const signParam = asString(params.sign) ? decodeURIComponent(asString(params.sign)) : '';
         const hemiParam = asString(params.hemisphere)
           ? (decodeURIComponent(asString(params.hemisphere)) as 'Northern' | 'Southern')
@@ -298,17 +282,22 @@ export default function AstrologyScreen() {
           return;
         }
 
-        // 🔮 DAILY (horoscope_cache via utils/daily)
         try {
           const dailyUser = buildDailyUser(u, signResolved, hemiResolved);
           const d = await getDailyAccessible(dailyUser, { useCache: true, debug: true });
+          
+          // 🔍 DEBUG LOGS ADDED HERE TOO
+          console.log('🔍 [astrology INIT] Daily data received:', d);
+          console.log('🔍 [astrology INIT] daily.daily value:', d?.daily);
+          console.log('🔍 [astrology INIT] daily.affirmation value:', d?.affirmation);
+          console.log('🔍 [astrology INIT] daily.deeper value:', d?.deeper);
+          
           setDaily(d || null);
         } catch (e) {
           console.warn('[astrology] daily fetch error:', e);
           setDaily(null);
         }
 
-        // Astronomical context
         const lunar = getLunarNow(hemiResolved);
         const events = getHemisphereEvents(hemiResolved);
         const positions = await getCurrentPlanetaryPositionsEnhanced(hemiResolved);
@@ -316,7 +305,6 @@ export default function AstrologyScreen() {
         setAstronomicalEvents(events);
         setPlanetaryPositions(positions);
 
-        // Constellations (by hemisphere)
         try {
           const consts = await getVisibleConstellationsEnhanced(hemiResolved);
           setVisibleConstellations(consts || []);
@@ -324,7 +312,6 @@ export default function AstrologyScreen() {
           setVisibleConstellations([]);
         }
 
-        // Language preference
         const language = await getUserLanguage();
         setCurrentLanguage(language);
 
@@ -343,10 +330,8 @@ export default function AstrologyScreen() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serviceDateUTC]); // include serviceDateUTC: if app launches after midnight, we fetch the right day
+  }, [serviceDateUTC]);
 
-  // Translation effect (Chinese only)
   useEffect(() => {
     const run = async () => {
       if (currentLanguage !== 'zh' || !daily) {
@@ -376,7 +361,6 @@ export default function AstrologyScreen() {
   const getDisplayText = (original?: string) => {
     const base = asString(original);
     if (currentLanguage !== 'zh') return base;
-    // ✅ avoid mixing || and ?? precedence issues
     if (daily?.daily && base === asString(daily.daily)) return (translatedContent.daily ?? base);
     if (daily?.affirmation && base === stripVersionSuffix(daily.affirmation))
       return (translatedContent.affirmation ?? base);
@@ -384,7 +368,6 @@ export default function AstrologyScreen() {
     return base;
   };
 
-  // Refresh
   const onRefresh = async (silent = false) => {
     if (inFlight.current) return;
     if (!silent) setRefreshing(true);
@@ -392,6 +375,11 @@ export default function AstrologyScreen() {
       if (effectiveSign) {
         const dailyUser = buildDailyUser(user, effectiveSign, resolvedHemisphere);
         const d = await getDailyAccessible(dailyUser, { useCache: true, debug: true });
+        
+        // 🔍 DEBUG LOGS FOR REFRESH
+        console.log('🔍 [astrology REFRESH] Daily data received:', d);
+        console.log('🔍 [astrology REFRESH] daily.daily value:', d?.daily);
+        
         setDaily(d || null);
       }
       const now = Date.now();
@@ -400,7 +388,6 @@ export default function AstrologyScreen() {
         const sub = await getSubscriptionStatus();
         setHasAccess(!!sub?.active);
       }
-      // refresh constellations
       try {
         const consts = await getVisibleConstellationsEnhanced(resolvedHemisphere);
         setVisibleConstellations(consts || []);
@@ -414,7 +401,6 @@ export default function AstrologyScreen() {
 
   const handleUpgrade = () => router.push('/subscription');
 
-  // ----- RENDER -----
   if (!ready || loading) {
     return (
       <View style={styles.container}>
@@ -427,7 +413,7 @@ export default function AstrologyScreen() {
         </SafeAreaView>
       </View>
     );
-    }
+  }
 
   if (error) {
     return (
@@ -436,7 +422,6 @@ export default function AstrologyScreen() {
         <SafeAreaView style={styles.safeArea}>
           <View style={styles.errorContainer}>
             <Text style={styles.errorText}>{error}</Text>
-
             <CosmicButton
               title="Calculate Your Cosmic Position"
               onPress={() => router.push('/(tabs)/find-cusp')}
@@ -460,12 +445,10 @@ export default function AstrologyScreen() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => onRefresh()} tintColor="#d4af37" colors={['#d4af37']} />}
           showsVerticalScrollIndicator={false}
         >
-          {/* Header */}
           <HoroscopeHeader signLabel={resolvedSign || effectiveSign || 'Select your sign'} />
           <Text style={styles.hemisphereDisplay}>{resolvedHemisphere} Hemisphere</Text>
           <HemisphereToggle />
 
-          {/* Daily Horoscope — from horoscope_cache via utils/daily */}
           {daily?.daily && (
             <LinearGradient colors={['rgba(139, 157, 195, 0.2)', 'rgba(139, 157, 195, 0.1)']} style={styles.horoscopeCard}>
               <View style={styles.cardHeader}>
@@ -476,7 +459,6 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          {/* Premium Content */}
           {hasAccess && asString(daily?.affirmation) !== '' && (
             <LinearGradient colors={['rgba(212, 175, 55, 0.2)', 'rgba(212, 175, 55, 0.1)']} style={styles.premiumCard}>
               <View style={styles.cardHeader}>
@@ -490,7 +472,6 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          {/* Astral Plane (Deeper Insights) */}
           {hasAccess && asString(daily?.deeper) !== '' && (
             <LinearGradient colors={['rgba(212, 175, 55, 0.2)', 'rgba(212, 175, 55, 0.1)']} style={styles.premiumCard}>
               <View style={styles.cardHeader}>
@@ -504,7 +485,6 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          {/* Cusp Gemstone */}
           {hasAccess && isCusp && (
             <LinearGradient colors={['rgba(212, 175, 55, 0.15)', 'rgba(139, 157, 195, 0.1)']} style={styles.gemstoneCard}>
               <View style={styles.cardHeader}>
@@ -530,9 +510,6 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          {/* Cosmic Perspective — (kept out as you’re focusing on daily data) */}
-
-          {/* Lunar Phase */}
           {moonPhase && (
             <LinearGradient colors={['rgba(139, 157, 195, 0.2)', 'rgba(139, 157, 195, 0.1)']} style={styles.lunarCard}>
               <View style={styles.cardHeader}>
@@ -549,7 +526,6 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          {/* Planetary Positions */}
           {hasAccess && planetaryPositions.length > 0 && (
             <LinearGradient colors={['rgba(212, 175, 55, 0.15)', 'rgba(212, 175, 55, 0.05)']} style={styles.planetsCard}>
               <View style={styles.cardHeader}>
@@ -571,7 +547,6 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          {/* Astrological Houses */}
           {hasAccess && (
             <LinearGradient colors={['rgba(139, 157, 195, 0.2)', 'rgba(139, 157, 195, 0.1)']} style={styles.housesCard}>
               <View style={styles.cardHeader}>
@@ -597,7 +572,6 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          {/* Astronomical Events (hemisphere-safe) */}
           {filteredEvents.length > 0 && (
             <LinearGradient colors={['rgba(139, 157, 195, 0.15)', 'rgba(139, 157, 195, 0.05)']} style={styles.eventsCard}>
               <View style={styles.cardHeader}>
@@ -613,7 +587,6 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          {/* Visible Constellations */}
           {visibleConstellations.length > 0 && (
             <LinearGradient
               colors={['rgba(139, 157, 195, 0.18)', 'rgba(139, 157, 195, 0.06)']}
@@ -636,14 +609,12 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          {/* 🔽 DailyReadings block (rendered after Planetary block; uses your new daily table content if you later switch it) */}
           <DailyReadings
             primarySign={effectiveSign || null}
             hemisphere={resolvedHemisphere}
             serviceDateUTC={serviceDateUTC.toISOString()}
           />
 
-          {/* Upgrade CTA */}
           {!hasAccess && (
             <LinearGradient colors={['rgba(212, 175, 55, 0.2)', 'rgba(212, 175, 55, 0.1)']} style={styles.upgradeCard}>
               <View style={styles.upgradeHeader}>
@@ -692,19 +663,13 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   cardTitle: { fontSize: 16, fontFamily: 'Vazirmatn-SemiBold', color: '#e8e8e8', marginLeft: 8, flex: 1 },
   premiumBadge: { backgroundColor: '#d4af37', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2, flexDirection: 'row', alignItems: 'center' },
-  cuspBadge: { backgroundColor: '#8b9dc3', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
-  cuspBadgeText: { fontSize: 10, fontFamily: 'Vazirmatn-SemiBold', color: '#1a1a2e', textTransform: 'uppercase', letterSpacing: 1 },
 
   horoscopeText: { fontSize: 18, fontFamily: 'Vazirmatn-Regular', color: '#e8e8e8', lineHeight: 28, textAlign: 'center' },
   affirmationText: { fontSize: 16, fontFamily: 'Vazirmatn-Regular', color: '#e8e8e8', lineHeight: 24, textAlign: 'center', fontStyle: 'italic' },
-  mysticText: { fontSize: 16, fontFamily: 'Vazirmatn-Regular', color: '#e8e8e8', lineHeight: 24, textAlign: 'center' },
   deeperText: { fontSize: 16, fontFamily: 'Vazirmatn-Regular', color: '#e8e8e8', lineHeight: 24, textAlign: 'center' },
 
   gemstoneName: { fontSize: 18, fontFamily: 'Vazirmatn-Bold', color: '#d4af37', textAlign: 'center', marginBottom: 8 },
   gemstoneMeaning: { fontSize: 14, fontFamily: 'Vazirmatn-Regular', color: '#e8e8e8', lineHeight: 20, textAlign: 'center' },
-
-  cosmicCard: { borderRadius: 16, padding: 20, marginBottom: 20, borderWidth: 1, borderColor: 'rgba(139, 157, 195, 0.3)' },
-  cosmicText: { fontSize: 16, fontFamily: 'Inter-Regular', color: '#e8e8e8', lineHeight: 24, textAlign: 'center' },
 
   lunarInfo: { alignItems: 'center' },
   lunarPhase: { fontSize: 20, fontFamily: 'Vazirmatn-Bold', color: '#8b9dc3', marginBottom: 4 },
@@ -732,38 +697,9 @@ const styles = StyleSheet.create({
   houseDescription: { fontSize: 14, fontFamily: 'Vazirmatn-Regular', color: '#8b9dc3', lineHeight: 18 },
   housesNote: { fontSize: 12, fontFamily: 'Vazirmatn-Regular', color: '#8b9dc3', textAlign: 'center', marginTop: 12, fontStyle: 'italic' },
 
-  // Constellations styles
-  constellationsCard: {
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(139, 157, 195, 0.3)',
-  },
-  constellationsWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  constellationPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: 'rgba(26, 26, 46, 0.5)',
-    borderWidth: 1,
-    borderColor: 'rgba(139, 157, 195, 0.3)',
-  },
-  constellationText: {
-    color: '#e8e8e8',
-    fontFamily: 'Vazirmatn-Medium',
-    fontSize: 14,
-  },
-  constellationsNote: {
-    fontSize: 12,
-    fontFamily: 'Inter-Regular',
-    color: '#8b9dc3',
-    textAlign: 'center',
-    marginTop: 12,
-    fontStyle: 'italic',
-  },
+  constellationsCard: { borderRadius: 16, padding: 20, marginBottom: 20, borderWidth: 1, borderColor: 'rgba(139, 157, 195, 0.3)' },
+  constellationsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  constellationPill: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: 'rgba(26, 26, 46, 0.5)', borderWidth: 1, borderColor: 'rgba(139, 157, 195, 0.3)' },
+  constellationText: { color: '#e8e8e8', fontFamily: 'Vazirmatn-Medium', fontSize: 14 },
+  constellationsNote: { fontSize: 12, fontFamily: 'Inter-Regular', color: '#8b9dc3', textAlign: 'center', marginTop: 12, fontStyle: 'italic' },
 });
