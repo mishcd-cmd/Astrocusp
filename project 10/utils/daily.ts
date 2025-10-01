@@ -1,75 +1,108 @@
+// utils/daily.ts
 'use client';
 
-import { supabase } from './supabase';
+import { supabase } from '@/utils/supabase';
 
 // ----- Types -----
 export type HemiShort = 'NH' | 'SH';
 export type HemiAny = HemiShort | 'Northern' | 'Southern';
 
 export type DailyRow = {
-  sign: string;             // e.g. "Aries" or "Aries-Taurus Cusp"
+  sign: string;               // e.g. "Aries" or "Aries-Taurus Cusp"
   hemisphere: 'Northern' | 'Southern';
-  date: string;             // "YYYY-MM-DD"
-  daily_horoscope?: string; // Today's Guidance
-  affirmation?: string;     // Daily Affirmation
-  deeper_insight?: string;  // Daily Astral Plane
+  date: string;               // "YYYY-MM-DD"
+  daily_horoscope?: string;   // Today's Guidance
+  affirmation?: string;       // Daily Affirmation
+  deeper_insight?: string;    // Daily Astral Plane
   [key: string]: any;
 };
 
-// ========== string helpers ==========
-const toTitle = (w: string) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : '');
+// ----- String helpers -----
+function toTitleCaseWord(w: string) {
+  return w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : '';
+}
 
-function normalizeSignTokens(raw: string) {
-  if (!raw) return '';
-  // normalize unicode dashes, trim spaces, collapse spaces
-  let s = raw.replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
+/**
+ * Normalize a sign label for DAILY matching.
+ * - Replaces en/em dash with hyphen
+ * - Title-cases tokens
+ * - Preserves/normalizes "Cusp"
+ */
+function normalizeSignForDaily(input: string): {
+  primaryWithCusp?: string;   // "Aries-Taurus Cusp"
+  primaryNoCusp: string;      // "Aries-Taurus" or "Aries"
+  parts: string[];            // ["Aries","Taurus"] or ["Taurus"]
+  isCusp: boolean;
+} {
+  if (!input) {
+    return { primaryNoCusp: '', parts: [], isCusp: false };
+  }
 
-  // title-case around hyphen and spaces
-  s = s
+  let s = input.trim();
+  s = s.replace(/[–—]/g, '-');     // en/em dashes → hyphen
+  s = s.replace(/\s+/g, ' ').trim();
+
+  const isCusp = /\bcusp\b/i.test(s);
+  const base = s
+    .replace(/\s*cusp\s*$/i, '')
+    .trim()
     .split('-')
-    .map((part) =>
+    .map(part =>
       part
         .trim()
         .split(' ')
-        .map(toTitle)
+        .map(toTitleCaseWord)
         .join(' ')
     )
     .join('-');
 
-  // normalize ending "cusp" -> "Cusp"
-  s = s.replace(/\s*cusp\s*$/i, ' Cusp').trim();
+  const parts = base.includes('-')
+    ? base.split('-').map(p => p.trim()).filter(Boolean)
+    : [base];
 
-  return s;
+  const primaryWithCusp = isCusp ? `${base} Cusp` : undefined;
+
+  return {
+    primaryWithCusp,
+    primaryNoCusp: base,
+    parts,
+    isCusp,
+  };
 }
 
-// Hemisphere → DB format
+// Hemisphere normalisation to match DB ("Northern"/"Southern")
 function hemiToDB(hemi?: HemiAny): 'Northern' | 'Southern' {
   const v = (hemi || 'Southern').toString().toLowerCase();
   if (v === 'northern' || v === 'nh') return 'Northern';
   return 'Southern';
 }
 
-// ========== date helpers ==========
-const pad2 = (n: number) => `${n}`.padStart(2, '0');
-const anchorLocal = (d = new Date()) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-const anchorUTC = (d = new Date()) =>
-  `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
-
+// ----- Date helpers (UTC + Local anchors) -----
+function pad2(n: number) {
+  return `${n}`.padStart(2, '0');
+}
+function anchorLocal(d = new Date()) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+function anchorUTC(d = new Date()) {
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
 function buildDailyAnchors(d = new Date()): string[] {
-  // Try UTC and Local, as well as +/- 1 day to dodge tz cutovers
-  const todayUTC = anchorUTC(d);
-  const todayLocal = anchorLocal(d);
-  const yUTC = anchorUTC(new Date(d.getTime() - 24 * 60 * 60 * 1000));
-  const tUTC = anchorUTC(new Date(d.getTime() + 24 * 60 * 60 * 1000));
-
-  const list = [todayUTC, todayLocal, yUTC, tUTC];
-  return [...new Set(list)];
+  const aUTC = anchorUTC(d);
+  const aLocal = anchorLocal(d);
+  return aUTC === aLocal ? [aUTC] : [aUTC, aLocal];
 }
 
-// ========== cache helpers ==========
-function cacheKeyDaily(userId: string | undefined, sign: string, hemi: 'Northern' | 'Southern', ymd: string) {
+// ----- Cache helpers -----
+function cacheKeyDaily(
+  userId: string | undefined,
+  sign: string,
+  hemi: 'Northern' | 'Southern',
+  ymd: string
+) {
   return `daily:${userId ?? 'anon'}:${sign}:${hemi}:${ymd}`;
 }
+
 function getFromCache<T = unknown>(key: string): T | null {
   try {
     if (typeof window === 'undefined') return null;
@@ -88,20 +121,71 @@ function setInCache(key: string, value: unknown) {
   }
 }
 
-// ========== DB query ==========
-async function fetchDailyRow(date: string, sign: string, hemi: 'Northern' | 'Southern', debug?: boolean) {
+/**
+ * Build sign attempts in **strict cusp-first** order.
+ * For cusp inputs, we DO NOT fall back to true signs by default.
+ *   1) "Aries-Taurus Cusp"
+ *   2) "Aries–Taurus Cusp" (en-dash)
+ *   3) "Aries-Taurus"
+ *   4) "Aries–Taurus"
+ * (and stop here for cusp unless allowTrueSignFallback = true)
+ * For pure signs, it's just ["Taurus"].
+ */
+function buildSignAttemptsForDaily(
+  inputLabel: string,
+  opts?: { allowTrueSignFallback?: boolean }
+): string[] {
+  const { primaryWithCusp, primaryNoCusp, parts, isCusp } = normalizeSignForDaily(inputLabel);
+  const allowFallback = !!opts?.allowTrueSignFallback;
+
+  const list: string[] = [];
+
+  if (primaryWithCusp) list.push(primaryWithCusp);
+  if (primaryNoCusp.includes('-')) {
+    // en-dash with Cusp
+    const enDashWithCusp = `${primaryNoCusp.replace('-', '–')} Cusp`;
+    list.push(enDashWithCusp);
+  }
+
+  // Without "Cusp" suffix (some content may be stored without it)
+  if (primaryNoCusp) list.push(primaryNoCusp);
+  if (primaryNoCusp.includes('-')) {
+    const enDashNoCusp = primaryNoCusp.replace('-', '–');
+    list.push(enDashNoCusp);
+  }
+
+  // Only if we explicitly allow it, append the individual signs
+  if (!isCusp || allowFallback) {
+    for (const p of parts) {
+      if (p) list.push(p);
+    }
+  }
+
+  // unique, truthy
+  return [...new Set(list)].filter(Boolean);
+}
+
+// ----- DB query (uses your table: astrology_cache) -----
+async function fetchDailyRow(
+  date: string,
+  sign: string,
+  hemi: 'Northern' | 'Southern',
+  debug?: boolean
+) {
   if (debug) {
     console.log('[daily] Executing query with params:', {
-      table: 'horoscope_cache',
+      table: 'astrology_cache',
       sign,
       hemisphere: hemi,
       date,
-      query: `SELECT * FROM horoscope_cache WHERE sign = '${sign}' AND hemisphere = '${hemi}' AND date = '${date}'`,
+      query: `SELECT sign, hemisphere, date, daily_horoscope, affirmation, deeper_insight
+              FROM astrology_cache
+              WHERE sign='${sign}' AND hemisphere='${hemi}' AND date='${date}'`
     });
   }
 
   const { data, error } = await supabase
-    .from('horoscope_cache')
+    .from('astrology_cache')
     .select('sign, hemisphere, date, daily_horoscope, affirmation, deeper_insight')
     .eq('sign', sign)
     .eq('hemisphere', hemi)
@@ -117,60 +201,22 @@ async function fetchDailyRow(date: string, sign: string, hemi: 'Northern' | 'Sou
       hasData: !!data,
       actualData: data
         ? {
-            sign: (data as any).sign,
-            hemisphere: (data as any).hemisphere,
-            date: (data as any).date,
-            hasDaily: !!(data as any).daily_horoscope,
-            dailyPreview: (data as any).daily_horoscope?.substring(0, 60) + '...',
+            sign: data.sign,
+            hemisphere: data.hemisphere,
+            date: data.date,
+            hasDaily: !!data.daily_horoscope,
+            hasAff: !!data.affirmation,
+            hasDeep: !!data.deeper_insight,
+            dailyPreview: data.daily_horoscope?.substring(0, 60) + '…'
           }
-        : null,
+        : null
     });
   }
 
-  if (error) return { row: null as DailyRow | null, error };
-  return { row: (data as DailyRow | null), error: null };
-}
-
-/**
- * Build sign attempts in strict order.
- * If the input looks like a cusp (contains hyphen or "cusp"), we try ONLY cusp spellings:
- *   1) "Aries-Taurus Cusp"
- *   2) "Aries–Taurus Cusp" (en-dash)
- *   3) "Aries–Taurus" (en-dash, no "Cusp")  ← optional if allowTrueSignFallback is false, this is still a cusp form in DB occasionally
- *   4) "Aries-Taurus" (hyphen, no "Cusp")
- *   (We DO NOT add single-sign fallbacks unless explicitly allowed.)
- *
- * If the input is a pure sign, the attempts are just ["Aries"].
- */
-function buildStrictDailyAttempts(inputLabel: string, allowTrueSignFallback: boolean): string[] {
-  const normalized = normalizeSignTokens(inputLabel);
-  if (!normalized) return [];
-
-  const looksLikeCusp = /cusp$/i.test(normalized) || normalized.includes('-');
-
-  // Split base and detect en-dash pair
-  const baseNoCusp = normalized.replace(/\s*Cusp$/i, '').trim(); // e.g. "Aries-Taurus"
-  const enDashBase = baseNoCusp.includes('-') ? baseNoCusp.replace('-', '–') : baseNoCusp;
-
-  if (looksLikeCusp) {
-    const attempts: string[] = [
-      `${baseNoCusp} Cusp`, // "Aries-Taurus Cusp"
-      `${enDashBase} Cusp`, // "Aries–Taurus Cusp"
-      enDashBase,           // "Aries–Taurus" (some rows may lack "Cusp")
-      baseNoCusp,           // "Aries-Taurus"
-    ];
-
-    // Only if explicitly allowed, add true-sign fallbacks
-    if (allowTrueSignFallback) {
-      const parts = baseNoCusp.split('-').map((p) => p.trim()).filter(Boolean);
-      attempts.push(...parts);
-    }
-
-    return [...new Set(attempts.filter(Boolean))];
+  if (error) {
+    return { row: null as DailyRow | null, error };
   }
-
-  // Pure sign case
-  return [baseNoCusp];
+  return { row: (data as DailyRow | null), error: null };
 }
 
 // ============================================================================
@@ -180,14 +226,14 @@ function buildStrictDailyAttempts(inputLabel: string, allowTrueSignFallback: boo
 /**
  * Get daily horoscope row for a user, cached by user+sign+hemisphere+date.
  *
- * @param signIn - UI label, e.g. "Aries-Taurus Cusp", "Aries-Taurus", or "Aries"
+ * @param signIn - UI label, e.g. "Aries-Taurus Cusp", "Aries-Taurus", or "Taurus"
  * @param hemisphereIn - "NH" | "SH" | "Northern" | "Southern"
  * @param opts
  *  - userId?: scope cache per user (recommended)
  *  - forceDate?: "YYYY-MM-DD"
  *  - useCache?: boolean (default true)
- *  - allowTrueSignFallback?: boolean (default false) ← keep cusp strict by default
  *  - debug?: boolean (logs attempts and results)
+ *  - allowTrueSignFallback?: boolean (default false for cusp inputs)
  */
 export async function getDailyForecast(
   signIn: string,
@@ -196,27 +242,38 @@ export async function getDailyForecast(
     userId?: string;
     forceDate?: string;
     useCache?: boolean;
-    allowTrueSignFallback?: boolean;
     debug?: boolean;
+    allowTrueSignFallback?: boolean;
   }
 ): Promise<DailyRow | null> {
   const debug = !!opts?.debug;
-  const allowTrueSignFallback = !!opts?.allowTrueSignFallback; // default false = strict cusp
   const userId = opts?.userId;
   const hemi = hemiToDB(hemisphereIn);
 
-  const anchors = opts?.forceDate ? [opts.forceDate] : buildDailyAnchors(new Date());
-  const signAttempts = buildStrictDailyAttempts(signIn, allowTrueSignFallback);
+  // Try today (UTC + local) and ±1 day to cover timezone edges
+  const today = new Date();
+  const anchors = opts?.forceDate
+    ? [opts.forceDate]
+    : [
+        anchorUTC(today),
+        anchorLocal(today),
+        anchorUTC(new Date(today.getTime() - 24 * 60 * 60 * 1000)), // yesterday UTC
+        anchorUTC(new Date(today.getTime() + 24 * 60 * 60 * 1000)), // tomorrow UTC
+      ];
+
+  // IMPORTANT: for cusp, default to no fallback to true signs
+  const signAttempts = buildSignAttemptsForDaily(signIn, {
+    allowTrueSignFallback: !!opts?.allowTrueSignFallback,
+  });
 
   if (debug) {
-    console.log('[daily] ENHANCED DEBUG - attempts', {
+    console.log('[daily] attempts', {
       originalSign: signIn,
       signAttempts,
       anchors,
       hemisphere: hemi,
-      todayUTC: anchorUTC(new Date()),
-      todayLocal: anchorLocal(new Date()),
-      allowTrueSignFallback,
+      todayUTC: anchorUTC(today),
+      todayLocal: anchorLocal(today),
     });
   }
 
@@ -244,11 +301,13 @@ export async function getDailyForecast(
       if (error) continue;
       if (row) {
         if (debug) {
-          console.log(`[daily] SUCCESS! Found row for sign="${s}", date="${dateStr}":`, {
+          console.log(`[daily] FOUND row for sign="${s}", date="${dateStr}":`, {
             sign: row.sign,
             hemisphere: row.hemisphere,
             date: row.date,
-            dailyPreview: row.daily_horoscope?.substring(0, 100) + '...',
+            daily: !!row.daily_horoscope,
+            affirmation: !!row.affirmation,
+            deeper: !!row.deeper_insight,
           });
         }
         const key = cacheKeyDaily(userId, s, hemi, dateStr);
@@ -259,18 +318,69 @@ export async function getDailyForecast(
   }
 
   if (debug) {
-    console.warn('[daily] not found for', { signAttempts, anchors, hemi, allowTrueSignFallback });
+    console.warn('[daily] not found for', { signAttempts, anchors, hemi });
   }
   return null;
 }
 
-// Optional helpers
+/**
+ * Convenience wrapper your screens can call.
+ * Resolves sign and hemisphere from a user object, and returns a ready payload.
+ */
+export async function getAccessibleHoroscope(user: any, opts?: {
+  forceDate?: string;
+  useCache?: boolean;
+  debug?: boolean;
+}) {
+  const debug = !!opts?.debug;
+
+  const hemisphere: HemiAny =
+    user?.hemisphere === 'NH' || user?.hemisphere === 'SH'
+      ? user.hemisphere
+      : (user?.hemisphere as 'Northern' | 'Southern') || 'Southern';
+
+  // Resolve the most specific sign label from user data for DAILY
+  // Prefer explicit cusp label if present
+  const signLabel =
+    user?.cuspResult?.cuspName || // e.g. "Aries–Taurus Cusp"
+    user?.cuspResult?.primarySign || // fallback
+    user?.preferred_sign ||
+    '';
+
+  // For cusp inputs we do not fall back to true sign by default
+  const isCuspInput = /\bcusp\b/i.test(signLabel);
+
+  const row = await getDailyForecast(signLabel, hemisphere, {
+    userId: user?.id || user?.email,
+    forceDate: opts?.forceDate,
+    useCache: opts?.useCache,
+    debug,
+    allowTrueSignFallback: !isCuspInput ? true : false, // cusp → no fallback; pure sign → fine
+  });
+
+  if (!row) {
+    return null;
+  }
+
+  // Build payload that your UI expects (names seen in your logs)
+  return {
+    date: row.date,
+    sign: row.sign,
+    hemisphere: row.hemisphere,
+    daily: row.daily_horoscope || '',
+    affirmation: row.affirmation || '',
+    deeper: row.deeper_insight || '',
+    raw: row,
+  };
+}
+
+// Optional helpers if you need them elsewhere
 export const DailyHelpers = {
-  normalizeSignTokens,
+  normalizeSignForDaily,
   hemiToDB,
   anchorLocal,
   anchorUTC,
   buildDailyAnchors,
-  buildStrictDailyAttempts,
+  buildSignAttemptsForDaily,
   cacheKeyDaily,
 };
