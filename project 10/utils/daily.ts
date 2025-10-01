@@ -4,7 +4,7 @@ import { supabase } from './supabase';
 export type DailyRow = {
   id?: number | string;
   date: string; // "YYYY-MM-DD"
-  sign: string; // "Aries" or "Aries–Taurus Cusp" / "Aries-Taurus Cusp"
+  sign: string; // "Aries" OR "Aries–Taurus Cusp" / "Aries-Taurus Cusp"
   hemisphere: 'Northern' | 'Southern';
   daily_horoscope?: string;
   affirmation?: string;
@@ -22,29 +22,18 @@ function splitCusp(raw: string): { primary: string; secondary?: string } {
   return { primary: titleCase(parts[0]) };
 }
 
-function buildDailySignOrFilter(signLabel: string): string | null {
-  // Table stores cusps WITH " Cusp" suffix. Accept both en dash and hyphen.
-  const { primary, secondary } = splitCusp(signLabel);
-  if (!primary) return null;
-
-  if (secondary) {
-    const a = `${primary}–${secondary} Cusp`;
-    const b = `${primary}-${secondary} Cusp`;
-    return `sign.eq.${a},sign.eq.${b}`;
-  }
-  return `sign.eq.${primary}`;
-}
-
 function resolveDailyHemisphere(label: string): 'Northern' | 'Southern' {
   const s = (label || '').toLowerCase();
   if (s === 'sh' || s.startsWith('s')) return 'Southern';
   return 'Northern';
 }
 
-/**
- * Fetch the daily row for a specific date/sign/hemisphere.
- * Uses OR rather than IN to avoid PostgREST 400s.
- */
+/** Match the way you store cusps: WITH the " Cusp" suffix; accept both hyphen & en-dash */
+function makeCuspVariants(primary: string, secondary: string) {
+  return [`${primary}–${secondary} Cusp`, `${primary}-${secondary} Cusp`];
+}
+
+/** Get the daily by exact sign (cusp first if applicable), then fallback to pure primary sign */
 export async function getAccessibleHoroscope(
   dateISO: string,
   signLabel: string,
@@ -52,23 +41,42 @@ export async function getAccessibleHoroscope(
 ): Promise<{ ok: boolean; row?: DailyRow; reason?: string }> {
   try {
     const hemi = resolveDailyHemisphere(hemisphereLabel);
-    const orFilter = buildDailySignOrFilter(signLabel);
+    const { primary, secondary } = splitCusp(signLabel);
 
-    let q = supabase
-      .from('astrology_cache')
-      .select('date,sign,hemisphere,daily_horoscope,affirmation,deeper_insight')
-      .eq('date', dateISO)
-      .eq('hemisphere', hemi)
-      .limit(1);
+    // 1) If cusp, try both variants as separate queries (no OR/in)
+    if (secondary) {
+      const variants = makeCuspVariants(primary, secondary);
+      for (const v of variants) {
+        const { data, error } = await supabase
+          .from('astrology_cache')
+          .select('date,sign,hemisphere,daily_horoscope,affirmation,deeper_insight')
+          .eq('date', dateISO)
+          .eq('hemisphere', hemi)
+          .eq('sign', v)
+          .limit(1)
+          .maybeSingle();
 
-    if (orFilter) q = q.or(orFilter);
+        if (error) return { ok: false, reason: error.message };
+        if (data) return { ok: true, row: data as DailyRow };
+      }
+    }
 
-    const { data, error } = await q.maybeSingle();
+    // 2) Fallback to pure sign
+    if (primary) {
+      const { data, error } = await supabase
+        .from('astrology_cache')
+        .select('date,sign,hemisphere,daily_horoscope,affirmation,deeper_insight')
+        .eq('date', dateISO)
+        .eq('hemisphere', hemi)
+        .eq('sign', primary)
+        .limit(1)
+        .maybeSingle();
 
-    if (error) return { ok: false, reason: error.message };
-    if (!data) return { ok: false, reason: 'not_found' };
+      if (error) return { ok: false, reason: error.message };
+      if (data) return { ok: true, row: data as DailyRow };
+    }
 
-    return { ok: true, row: data as DailyRow };
+    return { ok: false, reason: 'not_found' };
   } catch (e: any) {
     return { ok: false, reason: e?.message || 'unknown' };
   }
