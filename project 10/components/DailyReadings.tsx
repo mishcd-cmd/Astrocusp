@@ -1,132 +1,136 @@
 // components/DailyReadings.tsx
+'use client';
+
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Crown, Sparkles } from 'lucide-react-native';
 import { getDailyForecast, type HemiAny, type DailyRow } from '@/utils/daily';
 
-type Nullable<T> = T | null | undefined;
-
 type Props = {
-  /** e.g. "Aries" or "Aries–Taurus Cusp" (we’ll pass this straight into your utils) */
-  primarySign: Nullable<string>;
-  /** 'Northern' | 'Southern' (or NH/SH works too). If null, we default to 'Southern' to satisfy the util. */
-  hemisphere: Nullable<'Northern' | 'Southern'>;
-  /** ISO string recommended; we slice YYYY-MM-DD and pass as forceDate into your util */
-  serviceDateUTC?: Nullable<string>;
-  /** Optional: show simple “not found” message when there’s no row */
+  /** e.g. "Aries–Taurus Cusp", "Aries-Taurus", or "Aries" */
+  primarySign?: string | null;
+  /** "Northern" | "Southern" | "NH" | "SH" */
+  hemisphere?: HemiAny | null;
+  /** Date object or "YYYY-MM-DD" to force a specific day (optional) */
+  serviceDateUTC?: Date | string | null;
+  /** Show an empty card if nothing found (optional) */
   showEmptyState?: boolean;
+  /** Scope cache by user (optional, safe to omit) */
+  userId?: string | null;
+  /** Verbose console logging */
+  debug?: boolean;
 };
+
+function pad2(n: number) {
+  return `${n}`.padStart(2, '0');
+}
+function toYmdUTC(input: Date | string | null | undefined): string | undefined {
+  if (!input) return undefined;
+  if (typeof input === 'string') {
+    // If already YYYY-MM-DD, pass through
+    if (/^\d{4}-\d{2}-\d{2}$/.test(input)) return input;
+    const d = new Date(input);
+    if (isNaN(d.getTime())) return undefined;
+    return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+  }
+  const d = input as Date;
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
 
 export default function DailyReadings({
   primarySign,
   hemisphere,
   serviceDateUTC,
   showEmptyState,
+  userId,
+  debug,
 }: Props) {
+  const [loading, setLoading] = useState(true);
   const [row, setRow] = useState<DailyRow | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Normalize inputs for your util
-  const cleanSign = useMemo(() => (primarySign ?? '').trim(), [primarySign]);
-  const hemi: HemiAny = (hemisphere ?? 'Southern') as HemiAny; // your util requires a value
-  const forceDate = useMemo(
-    () => (serviceDateUTC ? serviceDateUTC.slice(0, 10) : undefined),
-    [serviceDateUTC]
-  );
+  const resolvedSign = useMemo(() => (primarySign ?? '').trim(), [primarySign]);
+  const resolvedHemi = useMemo<HemiAny>(() => (hemisphere ?? 'Southern'), [hemisphere]);
+  const forcedYmd = useMemo(() => toYmdUTC(serviceDateUTC), [serviceDateUTC]);
 
   useEffect(() => {
     let cancelled = false;
-    setError(null);
-    setRow(null);
-
-    if (!cleanSign) {
-      setError('No sign available.');
-      return;
-    }
-
-    (async () => {
-      try {
-        const data = await getDailyForecast(cleanSign, hemi, {
-          forceDate,
-          // cache + safe defaults are already inside your util
-          useCache: true,
-          debug: false,
-          // Your util: for cusp labels, it won’t fall back to true signs (good)
-        });
-        if (!cancelled) setRow(data);
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'Failed to load daily readings.');
+    const run = async () => {
+      if (!resolvedSign) {
+        setLoading(false);
+        setRow(null);
+        return;
       }
-    })();
-
+      setLoading(true);
+      setError(null);
+      try {
+        const found = await getDailyForecast(resolvedSign, resolvedHemi, {
+          userId: userId ?? undefined,
+          forceDate: forcedYmd,
+          useCache: true,
+          debug: !!debug,
+        });
+        if (!cancelled) setRow(found);
+      } catch (e: any) {
+        if (!cancelled) setError(e?.message ?? 'Failed to load daily reading.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    run();
     return () => {
       cancelled = true;
     };
-  }, [cleanSign, hemi, forceDate]);
+  }, [resolvedSign, resolvedHemi, forcedYmd, userId, debug]);
 
-  if (error) {
+  if (loading) {
     return (
       <View style={styles.card}>
-        <Text style={styles.errorText}>{error}</Text>
+        <ActivityIndicator size="small" color="#d4af37" />
+        <Text style={styles.loading}>Fetching your daily guidance…</Text>
       </View>
     );
   }
 
-  if (!row) {
-    if (showEmptyState) {
-      return (
-        <View style={styles.card}>
-          <Text style={styles.metaDim}>No daily reading found for today.</Text>
-        </View>
-      );
-    }
-    return null;
+  if (error) {
+    return (
+      <View style={styles.card}>
+        <Text style={styles.error}>{error}</Text>
+      </View>
+    );
   }
 
-  // row contains: sign, hemisphere, date, daily_horoscope, affirmation, deeper_insight
-  const guidance = row.daily_horoscope || '';
-  const affirmation = row.affirmation || '';
-  const deeper = row.deeper_insight || '';
+  if (!row && !showEmptyState) return null;
 
   return (
-    <View style={{ gap: 12 }}>
-      {/* Guidance */}
-      {guidance ? (
-        <LinearGradient colors={['rgba(139,157,195,0.20)', 'rgba(139,157,195,0.10)']} style={styles.card}>
-          <View style={styles.header}>
-            <Sparkles size={18} color="#8b9dc3" />
-            <Text style={styles.title}>Daily Horoscope</Text>
-            <Text style={styles.meta}>
-              {row.sign} • {row.hemisphere}
-            </Text>
-          </View>
-          <Text style={styles.body}>{guidance}</Text>
-        </LinearGradient>
+    <LinearGradient
+      colors={['rgba(139, 157, 195, 0.22)', 'rgba(139, 157, 195, 0.10)']}
+      style={styles.gradientCard}
+    >
+      <Text style={styles.header}>Daily Horoscope</Text>
+
+      {row?.daily_horoscope ? (
+        <Text style={styles.body}>{row.daily_horoscope}</Text>
+      ) : (
+        <Text style={styles.muted}>No daily guidance found for today.</Text>
+      )}
+
+      {row?.affirmation ? (
+        <>
+          <View style={styles.hr} />
+          <Text style={styles.subhead}>Daily Affirmation</Text>
+          <Text style={styles.bodyItalic}>{row.affirmation}</Text>
+        </>
       ) : null}
 
-      {/* Affirmation */}
-      {affirmation ? (
-        <LinearGradient colors={['rgba(212,175,55,0.20)', 'rgba(212,175,55,0.10)']} style={styles.card}>
-          <View style={styles.header}>
-            <Crown size={18} color="#d4af37" />
-            <Text style={styles.title}>Daily Affirmation</Text>
-          </View>
-          <Text style={styles.affirmation}>"{affirmation}"</Text>
-        </LinearGradient>
+      {row?.deeper_insight ? (
+        <>
+          <View style={styles.hr} />
+          <Text style={styles.subhead}>Daily Astral Plane</Text>
+          <Text style={styles.body}>{row.deeper_insight}</Text>
+        </>
       ) : null}
-
-      {/* Astral Plane */}
-      {deeper ? (
-        <LinearGradient colors={['rgba(212,175,55,0.18)', 'rgba(212,175,55,0.08)']} style={styles.card}>
-          <View style={styles.header}>
-            <Crown size={18} color="#d4af37" />
-            <Text style={styles.title}>Daily Astral Plane</Text>
-          </View>
-          <Text style={styles.body}>{deeper}</Text>
-        </LinearGradient>
-      ) : null}
-    </View>
+    </LinearGradient>
   );
 }
 
@@ -134,21 +138,69 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: 16,
     padding: 16,
+    marginBottom: 20,
+    backgroundColor: 'rgba(26,26,46,0.5)',
     borderWidth: 1,
-    borderColor: 'rgba(139,157,195,0.30)',
+    borderColor: 'rgba(139,157,195,0.3)',
+    alignItems: 'center',
   },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  title: { fontSize: 16, color: '#e8e8e8', fontFamily: 'Vazirmatn-SemiBold', flex: 1 },
-  meta: { fontSize: 12, color: '#8b9dc3', fontFamily: 'Inter-Regular' },
-  metaDim: { fontSize: 12, color: '#8b9dc3', fontFamily: 'Inter-Regular', textAlign: 'center' },
-  body: { fontSize: 14, color: '#e8e8e8', lineHeight: 20, fontFamily: 'Vazirmatn-Regular' },
-  affirmation: {
-    fontSize: 15,
+  gradientCard: {
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(139,157,195,0.3)',
+  },
+  header: {
+    fontSize: 18,
+    fontFamily: 'Vazirmatn-Bold',
     color: '#e8e8e8',
-    lineHeight: 22,
-    fontFamily: 'Vazirmatn-Regular',
-    fontStyle: 'italic',
+    marginBottom: 8,
     textAlign: 'center',
   },
-  errorText: { color: '#ff6b6b', fontFamily: 'Vazirmatn-Medium' },
+  subhead: {
+    fontSize: 16,
+    fontFamily: 'Vazirmatn-SemiBold',
+    color: '#d4af37',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  body: {
+    fontSize: 16,
+    fontFamily: 'Vazirmatn-Regular',
+    color: '#e8e8e8',
+    lineHeight: 24,
+    textAlign: 'center',
+  },
+  bodyItalic: {
+    fontSize: 16,
+    fontFamily: 'Vazirmatn-Regular',
+    color: '#e8e8e8',
+    lineHeight: 24,
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  muted: {
+    fontSize: 14,
+    fontFamily: 'Vazirmatn-Regular',
+    color: '#8b9dc3',
+    textAlign: 'center',
+  },
+  hr: {
+    height: 1,
+    backgroundColor: 'rgba(139,157,195,0.25)',
+    marginVertical: 12,
+  },
+  loading: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#8b9dc3',
+    fontFamily: 'Vazirmatn-Regular',
+  },
+  error: {
+    fontSize: 14,
+    color: '#ff6b6b',
+    fontFamily: 'Vazirmatn-Medium',
+    textAlign: 'center',
+  },
 });

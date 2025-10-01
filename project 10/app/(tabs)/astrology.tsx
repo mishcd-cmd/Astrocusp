@@ -15,7 +15,6 @@ import { useFocusEffect } from '@react-navigation/native';
 import {
   Star,
   Moon,
-  Eye,
   Crown,
   Telescope,
   Gem,
@@ -29,7 +28,10 @@ import HoroscopeHeader from '../../components/HoroscopeHeader';
 
 import { getUserData, type UserProfile } from '../../utils/userData';
 import { getSubscriptionStatus } from '../../utils/billing';
-import { getAccessibleHoroscope, type HoroscopeData } from '../../utils/horoscopeData';
+
+// ✅ use your working daily helper
+import { getAccessibleHoroscope } from '../../utils/daily';
+
 import {
   getHemisphereEvents,
   getCurrentPlanetaryPositionsEnhanced,
@@ -42,7 +44,7 @@ import { useHemisphere } from '../../providers/HemisphereProvider';
 import HemisphereToggle from '../../components/HemisphereToggle';
 import { getAstrologicalHouse } from '../../utils/zodiacData';
 
-// ✅ daily block
+// Optional: show your DB daily table under Planetary block
 import DailyReadings from '../../components/DailyReadings';
 
 /* -------------------------
@@ -55,13 +57,10 @@ function stripVersionSuffix(v?: string) {
   const s = asString(v).trim();
   return s.replace(/\s*V\d+\s*$/i, '').trim();
 }
-// ✅ treat empty string as null (so we can use ?? without mixing ||)
-const nonEmpty = (s?: string | null) => (typeof s === 'string' && s.trim() !== '' ? s : null);
 
 /* -------------------------
  * Date helpers (fix stale daily content)
  * ------------------------- */
-// Returns a Date set to **UTC midnight** for the user's **local** calendar day.
 function getUTCMidnightForLocalDay(localNow = new Date()): Date {
   const y = localNow.getFullYear();
   const m = localNow.getMonth();
@@ -69,20 +68,21 @@ function getUTCMidnightForLocalDay(localNow = new Date()): Date {
   return new Date(Date.UTC(y, m, d, 0, 0, 0, 0));
 }
 
-// Milliseconds until next local midnight
 function msUntilNextLocalMidnight(now = new Date()): number {
   const next = new Date(now);
   next.setHours(24, 0, 0, 0);
   return next.getTime() - now.getTime();
 }
 
-// ✅ ymd string for DailyReadings prop
-function ymd(d: Date) {
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${dd}`;
-}
+type HoroscopeData = {
+  date: string;
+  sign: string;
+  hemisphere: 'Northern' | 'Southern';
+  daily: string;
+  affirmation: string;
+  deeper: string;
+  raw: any;
+};
 
 export default function AstrologyScreen() {
   const router = useRouter();
@@ -164,8 +164,18 @@ export default function AstrologyScreen() {
     let cancelled = false;
     (async () => {
       try {
-        const data = await getAccessibleHoroscope(serviceDateUTC, effectiveSign, resolvedHemisphere);
-        if (!cancelled) setHoroscope(data || null);
+        const effectiveUser = {
+          ...(user || {}),
+          hemisphere: resolvedHemisphere,
+          cuspResult: (user?.cuspResult ?? {
+            cuspName: effectiveSign,
+            primarySign: effectiveSign,
+            isOnCusp: /cusp/i.test(String(effectiveSign)),
+          }),
+        };
+        const data = await getAccessibleHoroscope(effectiveUser, { debug: true });
+        if (!cancelled) setHoroscope((data as any) || null);
+
         // refresh constellations on hemisphere change
         try {
           const consts = await getVisibleConstellationsEnhanced(resolvedHemisphere);
@@ -180,16 +190,16 @@ export default function AstrologyScreen() {
     return () => {
       cancelled = true;
     };
-  }, [effectiveSign, resolvedHemisphere, ready, serviceDateUTC]);
+  }, [effectiveSign, resolvedHemisphere, ready, serviceDateUTC, user]);
 
-  // Auto flip dayTick at **local midnight** so content rolls to the new day
+  // Auto flip dayTick at local midnight
   useEffect(() => {
     const ms = msUntilNextLocalMidnight();
     const t = setTimeout(() => setDayTick(tick => tick + 1), ms + 1000);
     return () => clearTimeout(t);
   }, [dayTick]);
 
-  // Also refetch when the screen regains focus (e.g. app slept overnight)
+  // Refetch on screen focus
   useFocusEffect(
     useCallback(() => {
       if (ready) {
@@ -274,9 +284,18 @@ export default function AstrologyScreen() {
           return;
         }
 
-        // Load horoscope (using UTC-midnight service date)
-        const data = await getAccessibleHoroscope(serviceDateUTC, signResolved, hemiResolved);
-        setHoroscope(data || null);
+        // ✅ Load horoscope via daily helper
+        const effectiveUser = {
+          ...(u || {}),
+          hemisphere: hemiResolved,
+          cuspResult: (u?.cuspResult ?? {
+            cuspName: signResolved,
+            primarySign: signResolved,
+            isOnCusp: /cusp/i.test(String(signResolved)),
+          }),
+        };
+        const data = await getAccessibleHoroscope(effectiveUser, { debug: true });
+        setHoroscope((data as any) || null);
 
         // Astronomical context
         const lunar = getLunarNow(hemiResolved);
@@ -294,10 +313,6 @@ export default function AstrologyScreen() {
           setVisibleConstellations([]);
         }
 
-        // Language preference
-        const language = await getUserLanguage();
-        setCurrentLanguage(language);
-
         console.log('✅ [astrology] Init complete');
       } catch (err: any) {
         console.error('❌ [astrology] Init error:', err);
@@ -314,7 +329,7 @@ export default function AstrologyScreen() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serviceDateUTC]); // include serviceDateUTC: if app launches after midnight, we fetch the right day
+  }, [serviceDateUTC]);
 
   // Translation effect
   useEffect(() => {
@@ -346,10 +361,10 @@ export default function AstrologyScreen() {
   const getDisplayText = (original?: string) => {
     const base = asString(original);
     if (currentLanguage !== 'zh') return base;
-    if (horoscope?.daily && base === asString(horoscope.daily)) return translatedContent.daily || base;
+    if (horoscope?.daily && base === asString(horoscope.daily)) return translatedContent.daily ?? base;
     if (horoscope?.affirmation && base === stripVersionSuffix(horoscope.affirmation))
-      return translatedContent.affirmation || base;
-    if (horoscope?.deeper && base === stripVersionSuffix(horoscope.deeper)) return translatedContent.deeper || base;
+      return translatedContent.affirmation ?? base;
+    if (horoscope?.deeper && base === stripVersionSuffix(horoscope.deeper)) return translatedContent.deeper ?? base;
     return base;
   };
 
@@ -359,8 +374,17 @@ export default function AstrologyScreen() {
     if (!silent) setRefreshing(true);
     try {
       if (effectiveSign) {
-        const data = await getAccessibleHoroscope(serviceDateUTC, effectiveSign, resolvedHemisphere);
-        setHoroscope(data || null);
+        const effectiveUser = {
+          ...(user || {}),
+          hemisphere: resolvedHemisphere,
+          cuspResult: (user?.cuspResult ?? {
+            cuspName: effectiveSign,
+            primarySign: effectiveSign,
+            isOnCusp: /cusp/i.test(String(effectiveSign)),
+          }),
+        };
+        const data = await getAccessibleHoroscope(effectiveUser, { debug: true });
+        setHoroscope((data as any) || null);
       }
       const now = Date.now();
       if (now - lastSubCheck.current > 120_000) {
@@ -433,16 +457,8 @@ export default function AstrologyScreen() {
           <Text style={styles.hemisphereDisplay}>{resolvedHemisphere} Hemisphere</Text>
           <HemisphereToggle />
 
-          {/* ✅ Daily Readings (under header; uses table astrology_cache) */}
-          <DailyReadings
-            primarySign={nonEmpty(resolvedSign) ?? nonEmpty(effectiveSign)}
-            hemisphere={resolvedHemisphere ?? null}
-            serviceDateUTC={ymd(serviceDateUTC)}
-            showEmptyState
-          />
-
-          {/* Daily Horoscope (legacy text from horoscopeData) */}
-          {horoscope?.daily && (
+          {/* Daily Horoscope (from utils/daily.ts) */}
+          {horoscope?.daily ? (
             <LinearGradient colors={['rgba(139, 157, 195, 0.2)', 'rgba(139, 157, 195, 0.1)']} style={styles.horoscopeCard}>
               <View style={styles.cardHeader}>
                 <Star size={20} color="#8b9dc3" />
@@ -450,10 +466,10 @@ export default function AstrologyScreen() {
               </View>
               <Text style={styles.horoscopeText}>{getDisplayText(horoscope.daily)}</Text>
             </LinearGradient>
-          )}
+          ) : null}
 
           {/* Premium Content */}
-          {hasAccess && asString(horoscope?.affirmation) !== '' && (
+          {hasAccess && (horoscope?.affirmation ?? '') !== '' && (
             <LinearGradient colors={['rgba(212, 175, 55, 0.2)', 'rgba(212, 175, 55, 0.1)']} style={styles.premiumCard}>
               <View style={styles.cardHeader}>
                 <Sparkles size={20} color="#d4af37" />
@@ -466,22 +482,7 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          {/* Mystic Opening for Cusps */}
-          {hasAccess && isCusp && (
-            <LinearGradient colors={['rgba(139, 157, 195, 0.25)', 'rgba(212, 175, 55, 0.15)']} style={styles.premiumCard}>
-              <View style={styles.cardHeader}>
-                <Eye size={20} color="#8b9dc3" />
-                <Text style={styles.cardTitle}>Mystic Opening</Text>
-                <View style={styles.cuspBadge}>
-                  <Text style={styles.cuspBadgeText}>CUSP</Text>
-                </View>
-              </View>
-              <Text style={styles.mysticText}>Open yourself to the threshold between signs today.</Text>
-            </LinearGradient>
-          )}
-
-          {/* Astral Plane (Deeper Insights) */}
-          {hasAccess && asString(horoscope?.deeper) !== '' && (
+          {hasAccess && (horoscope?.deeper ?? '') !== '' && (
             <LinearGradient colors={['rgba(212, 175, 55, 0.2)', 'rgba(212, 175, 55, 0.1)']} style={styles.premiumCard}>
               <View style={styles.cardHeader}>
                 <Crown size={20} color="#d4af37" />
@@ -520,17 +521,6 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          {/* Cosmic Perspective */}
-          {hasAccess && horoscope?.celestialInsight && (
-            <LinearGradient colors={['rgba(139, 157, 195, 0.2)', 'rgba(139, 157, 195, 0.1)']} style={styles.cosmicCard}>
-              <View style={styles.cardHeader}>
-                <Telescope size={20} color="#8b9dc3" />
-                <Text style={styles.cardTitle}>Cosmic Perspective</Text>
-              </View>
-              <Text style={styles.cosmicText}>{getDisplayText(horoscope.celestialInsight)}</Text>
-            </LinearGradient>
-          )}
-
           {/* Lunar Phase */}
           {moonPhase && (
             <LinearGradient colors={['rgba(139, 157, 195, 0.2)', 'rgba(139, 157, 195, 0.1)']} style={styles.lunarCard}>
@@ -556,7 +546,7 @@ export default function AstrologyScreen() {
                 <Text style={styles.cardTitle}>Planetary Influences</Text>
               </View>
               <View style={styles.planetsGrid}>
-                {planetaryPositions.slice(0, 5).map((planet) => (
+                {planetaryPositions.slice(0, 5).map((planet: any) => (
                   <View key={planet.planet} style={styles.planetItem}>
                     <Text style={styles.planetName}>{planet.planet}</Text>
                     <Text style={styles.planetPosition}>
@@ -635,6 +625,17 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
+          {/* 🔽 Optional: table-driven daily rows under Planetary Influences */}
+          <DailyReadings
+            primarySign={resolvedSign ?? effectiveSign ?? ''}
+            hemisphere={
+              resolvedHemisphere === 'Northern' ? 'Northern'
+              : resolvedHemisphere === 'Southern' ? 'Southern'
+              : null
+            }
+            serviceDateUTC={serviceDateUTC?.toISOString?.() ?? null}
+          />
+
           {/* Upgrade CTA */}
           {!hasAccess && (
             <LinearGradient colors={['rgba(212, 175, 55, 0.2)', 'rgba(212, 175, 55, 0.1)']} style={styles.upgradeCard}>
@@ -684,19 +685,13 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   cardTitle: { fontSize: 16, fontFamily: 'Vazirmatn-SemiBold', color: '#e8e8e8', marginLeft: 8, flex: 1 },
   premiumBadge: { backgroundColor: '#d4af37', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2, flexDirection: 'row', alignItems: 'center' },
-  cuspBadge: { backgroundColor: '#8b9dc3', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
-  cuspBadgeText: { fontSize: 10, fontFamily: 'Vazirmatn-SemiBold', color: '#1a1a2e', textTransform: 'uppercase', letterSpacing: 1 },
 
   horoscopeText: { fontSize: 18, fontFamily: 'Vazirmatn-Regular', color: '#e8e8e8', lineHeight: 28, textAlign: 'center' },
   affirmationText: { fontSize: 16, fontFamily: 'Vazirmatn-Regular', color: '#e8e8e8', lineHeight: 24, textAlign: 'center', fontStyle: 'italic' },
-  mysticText: { fontSize: 16, fontFamily: 'Vazirmatn-Regular', color: '#e8e8e8', lineHeight: 24, textAlign: 'center' },
   deeperText: { fontSize: 16, fontFamily: 'Vazirmatn-Regular', color: '#e8e8e8', lineHeight: 24, textAlign: 'center' },
 
   gemstoneName: { fontSize: 18, fontFamily: 'Vazirmatn-Bold', color: '#d4af37', textAlign: 'center', marginBottom: 8 },
   gemstoneMeaning: { fontSize: 14, fontFamily: 'Vazirmatn-Regular', color: '#e8e8e8', lineHeight: 20, textAlign: 'center' },
-
-  cosmicCard: { borderRadius: 16, padding: 20, marginBottom: 20, borderWidth: 1, borderColor: 'rgba(139, 157, 195, 0.3)' },
-  cosmicText: { fontSize: 16, fontFamily: 'Inter-Regular', color: '#e8e8e8', lineHeight: 24, textAlign: 'center' },
 
   lunarInfo: { alignItems: 'center' },
   lunarPhase: { fontSize: 20, fontFamily: 'Vazirmatn-Bold', color: '#8b9dc3', marginBottom: 4 },
@@ -724,7 +719,6 @@ const styles = StyleSheet.create({
   houseDescription: { fontSize: 14, fontFamily: 'Vazirmatn-Regular', color: '#8b9dc3', lineHeight: 18 },
   housesNote: { fontSize: 12, fontFamily: 'Vazirmatn-Regular', color: '#8b9dc3', textAlign: 'center', marginTop: 12, fontStyle: 'italic' },
 
-  // Constellations styles
   constellationsCard: {
     borderRadius: 16,
     padding: 20,
