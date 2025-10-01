@@ -8,36 +8,31 @@ export type DailyRow = {
   hemisphere: 'Northern' | 'Southern';
   daily_horoscope?: string;
   affirmation?: string;
-  deeper_insight?: string; // "Daily Astral Plane" in your UI
+  deeper_insight?: string;
 };
 
-function titleCase(s: string) {
-  return (s || '')
-    .toLowerCase()
-    .replace(/\b\w/g, (m) => m.toUpperCase());
-}
+const titleCase = (s: string) =>
+  (s || '').toLowerCase().replace(/\b\w/g, (m) => m.toUpperCase());
 
 function splitCusp(raw: string): { primary: string; secondary?: string } {
   if (!raw) return { primary: '' };
   const cleaned = raw.replace(/\s*cusp.*$/i, ''); // drop trailing "cusp"
   const parts = cleaned.split(/[–-]/).map((p) => p.trim()).filter(Boolean);
-  if (parts.length >= 2) {
-    return { primary: titleCase(parts[0]), secondary: titleCase(parts[1]) };
-  }
+  if (parts.length >= 2) return { primary: titleCase(parts[0]), secondary: titleCase(parts[1]) };
   return { primary: titleCase(parts[0]) };
 }
 
-function buildDailySignVariants(signLabel: string): string[] {
-  // The daily table stores pure signs ("Aries") OR cusp with " Cusp" suffix.
-  // Accept both Unicode en dash and ASCII hyphen.
+function buildDailySignOrFilter(signLabel: string): string | null {
+  // Table stores cusps WITH " Cusp" suffix. Accept both en dash and hyphen.
   const { primary, secondary } = splitCusp(signLabel);
+  if (!primary) return null;
 
   if (secondary) {
     const a = `${primary}–${secondary} Cusp`;
     const b = `${primary}-${secondary} Cusp`;
-    return [a, b];
+    return `sign.eq.${a},sign.eq.${b}`;
   }
-  return [primary];
+  return `sign.eq.${primary}`;
 }
 
 function resolveDailyHemisphere(label: string): 'Northern' | 'Southern' {
@@ -48,26 +43,27 @@ function resolveDailyHemisphere(label: string): 'Northern' | 'Southern' {
 
 /**
  * Fetch the daily row for a specific date/sign/hemisphere.
- * - Matches "Aries–Taurus Cusp" OR "Aries-Taurus Cusp"
- * - Maps hemisphere to the full words the table uses
+ * Uses OR rather than IN to avoid PostgREST 400s.
  */
 export async function getAccessibleHoroscope(
-  dateISO: string,     // "YYYY-MM-DD"
-  signLabel: string,   // "Aries" or "Aries–Taurus Cusp"
-  hemisphereLabel: string // "Northern"/"Southern"/"NH"/"SH"
+  dateISO: string,
+  signLabel: string,
+  hemisphereLabel: string
 ): Promise<{ ok: boolean; row?: DailyRow; reason?: string }> {
   try {
-    const hemi = resolveDailyHemisphere(hemisphereLabel); // "Northern"/"Southern"
-    const signVariants = buildDailySignVariants(signLabel);
+    const hemi = resolveDailyHemisphere(hemisphereLabel);
+    const orFilter = buildDailySignOrFilter(signLabel);
 
-    const { data, error } = await supabase
+    let q = supabase
       .from('astrology_cache')
       .select('date,sign,hemisphere,daily_horoscope,affirmation,deeper_insight')
       .eq('date', dateISO)
       .eq('hemisphere', hemi)
-      .in('sign', signVariants)
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+
+    if (orFilter) q = q.or(orFilter);
+
+    const { data, error } = await q.maybeSingle();
 
     if (error) return { ok: false, reason: error.message };
     if (!data) return { ok: false, reason: 'not_found' };
