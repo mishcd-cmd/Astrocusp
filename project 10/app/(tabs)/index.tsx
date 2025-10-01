@@ -1,5 +1,5 @@
 // app/(tabs)/index.tsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -23,12 +23,8 @@ import CuspLogo from '@/components/CuspLogo';
 import { calculateCusp, BirthInfo, CuspResult } from '@/utils/astrology';
 import { getAstronomicalInsight } from '@/utils/astronomy';
 import { getBirthstoneForSign } from '@/utils/birthstones';
-
-// ✅ Use your existing utils/supabase (avoid ../../lib/supabase)
 import { supabase } from '@/utils/supabase';
-
-// ✅ Keep your user cache helpers
-import { healUserCache, getUserData } from '@/utils/userData';
+import { healUserCache } from '@/utils/userData';
 
 // Fallback for web environment
 if (typeof Platform === 'undefined') {
@@ -36,7 +32,7 @@ if (typeof Platform === 'undefined') {
 }
 
 /* ------------------------------------------------------------------
-   Minimal inline cache helpers (no import from ../../lib/cache)
+   Minimal inline cache helpers
 -------------------------------------------------------------------*/
 let RNAsyncStorage: any = null;
 try {
@@ -91,12 +87,6 @@ async function purgeUserCacheByEmail(email: string): Promise<void> {
 }
 /* ------------------------------------------------------------------*/
 
-function mapHemiParam(h?: string) {
-  if (h === 'NH' || h === 'Northern') return 'NH';
-  if (h === 'SH' || h === 'Southern') return 'SH';
-  return 'SH';
-}
-
 function normalizeCuspLabel(label?: string | null): string | undefined {
   if (!label) return undefined;
   let s = label.trim().replace(/[—–]/g, '–').replace(/\s+/g, ' ').trim();
@@ -114,9 +104,16 @@ function normalizeCuspLabel(label?: string | null): string | undefined {
   return s;
 }
 
+// Local UI choice ('NH' | 'SH')
+type HemiShort = 'NH' | 'SH';
+// Domain type expected by utils ('Northern' | 'Southern')
+type HemiLong = 'Northern' | 'Southern';
+
+const toLongHemisphere = (h: HemiShort): HemiLong => (h === 'NH' ? 'Northern' : 'Southern');
+
 export default function TabIndex() {
   const [currentStep, setCurrentStep] = useState<'form' | 'result'>('form');
-  const [hemisphere, setHemisphere] = useState<'NH' | 'SH'>('SH');
+  const [hemisphere, setHemisphere] = useState<HemiShort>('SH');
   const [birthDate, setBirthDate] = useState('');
   const [birthTime, setBirthTime] = useState('');
   const [birthLocation, setBirthLocation] = useState('');
@@ -130,28 +127,21 @@ export default function TabIndex() {
 
   // Handle legacy routing - redirect to main astrology tab if accessed directly
   useEffect(() => {
-    // Always redirect legacy index route to astrology
     if (pathname === '/(tabs)/' || pathname === '/(tabs)/index') {
       routerRef.replace('/(tabs)/astrology');
     }
-  }, [routerRef, pathname, currentStep, birthDate, birthTime, birthLocation]);
+  }, [routerRef, pathname]);
 
   const validateInputs = (): string | null => {
     if (!birthDate.trim()) return 'Please enter your birth date';
     if (!birthTime.trim()) return 'Please enter your birth time';
     if (!birthLocation.trim()) return 'Please enter your birth location';
 
-    // Basic date format validation
     const dateRegex = /^\d{1,2}\/\d{1,2}\/\d{4}$/;
-    if (!dateRegex.test(birthDate)) {
-      return 'Please enter date in DD/MM/YYYY format';
-    }
+    if (!dateRegex.test(birthDate)) return 'Please enter date in DD/MM/YYYY format';
 
-    // Basic time format validation
     const timeRegex = /^\d{1,2}:\d{2}(\s?(AM|PM))?$/i;
-    if (!timeRegex.test(birthTime)) {
-      return 'Please enter time in HH:MM or HH:MM AM/PM format';
-    }
+    if (!timeRegex.test(birthTime)) return 'Please enter time in HH:MM or HH:MM AM/PM format';
 
     return null;
   };
@@ -166,32 +156,33 @@ export default function TabIndex() {
 
       setCalculating(true);
 
+      // Map to domain hemisphere for utils
+      const hemiLong: HemiLong = toLongHemisphere(hemisphere);
+
       const birthInfo: BirthInfo = {
         date: birthDate,
         time: birthTime,
         location: birthLocation,
-        hemisphere,
+        hemisphere: hemiLong,
       };
 
       const cuspResult = await calculateCusp(birthInfo);
       setResult(cuspResult);
 
-      // Get astronomical insight
+      // astronomy util expects a hemisphere string (HemiLong)
       try {
-        const insight = await getAstronomicalInsight(birthInfo);
-        setAstronomicalInsight(insight);
+        const insight = await getAstronomicalInsight(hemiLong);
+        setAstronomicalInsight(insight || '');
       } catch (e) {
         console.warn('[TabIndex] Failed to get astronomical insight:', e);
         setAstronomicalInsight('');
       }
 
-      // Get birthstone information
+      // Get birthstone info safely
       try {
         const primarySign = cuspResult.primarySign;
-        if (primarySign) {
-          const birthstoneInfo = getBirthstoneForSign(primarySign);
-          setBirthstone(birthstoneInfo);
-        }
+        const bs = primarySign ? getBirthstoneForSign(primarySign) : undefined;
+        setBirthstone(bs ? { name: bs.traditional ?? bs.sign ?? 'Birthstone', meaning: bs.meaning ?? '' } : null);
       } catch (e) {
         console.warn('[TabIndex] Failed to get birthstone:', e);
         setBirthstone(null);
@@ -219,7 +210,6 @@ export default function TabIndex() {
         return;
       }
 
-      // Save to user profile
       const { error } = await supabase
         .from('user_profiles')
         .upsert({
@@ -227,7 +217,7 @@ export default function TabIndex() {
           birth_date: birthDate,
           birth_time: birthTime,
           birth_location: birthLocation,
-          hemisphere: hemisphere,
+          hemisphere: toLongHemisphere(hemisphere),
           primary_sign: result.primarySign,
           secondary_sign: result.secondarySign,
           cusp_name: normalizeCuspLabel(result.cuspName),
@@ -241,7 +231,6 @@ export default function TabIndex() {
         return;
       }
 
-      // Clear legacy caches and heal user cache
       await purgeLegacyCachesOnSignIn();
       await purgeUserCacheByEmail(user.email || '');
       await healUserCache();
@@ -258,30 +247,28 @@ export default function TabIndex() {
   };
 
   const handleViewDetails = () => {
-    if (result) {
-      router.push({
-        pathname: '/cusp-details',
-        params: {
-          primarySign: result.primarySign,
-          secondarySign: result.secondarySign,
-          cuspName: result.cuspName,
-          description: result.description,
-          hemisphere,
-        },
-      });
-    }
+    if (!result) return;
+    router.push({
+      pathname: '/cusp-details',
+      params: {
+        primarySign: result.primarySign,
+        secondarySign: result.secondarySign,
+        cuspName: result.cuspName,
+        description: result.description,
+        hemisphere: toLongHemisphere(hemisphere),
+      },
+    });
   };
 
   const handleViewSignDetails = () => {
-    if (result) {
-      router.push({
-        pathname: '/sign-details',
-        params: {
-          sign: result.primarySign,
-          hemisphere,
-        },
-      });
-    }
+    if (!result) return;
+    router.push({
+      pathname: '/sign-details',
+      params: {
+        sign: result.primarySign,
+        hemisphere: toLongHemisphere(hemisphere),
+      },
+    });
   };
 
   const handleViewHoroscope = () => {
@@ -316,38 +303,26 @@ export default function TabIndex() {
         </Text>
         <View style={styles.hemisphereButtons}>
           <TouchableOpacity
-            style={[
-              styles.hemisphereButton,
-              hemisphere === 'SH' && styles.hemisphereButtonActive,
-            ]}
+            style={[styles.hemisphereButton, hemisphere === 'SH' && styles.hemisphereButtonActive]}
             onPress={() => setHemisphere('SH')}
           >
-            <Text
-              style={[
-                styles.hemisphereButtonText,
-                hemisphere === 'SH' && styles.hemisphereButtonTextActive,
-              ]}
-            >
+            <Text style={[styles.hemisphereButtonText, hemisphere === 'SH' && styles.hemisphereButtonTextActive]}>
               Southern Hemisphere
             </Text>
-            <Text style={styles.hemisphereSubtext}>Australia, New Zealand, South America, Southern Africa</Text>
+            <Text style={styles.hemisphereSubtext}>
+              Australia, New Zealand, South America, Southern Africa
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[
-              styles.hemisphereButton,
-              hemisphere === 'NH' && styles.hemisphereButtonActive,
-            ]}
+            style={[styles.hemisphereButton, hemisphere === 'NH' && styles.hemisphereButtonActive]}
             onPress={() => setHemisphere('NH')}
           >
-            <Text
-              style={[
-                styles.hemisphereButtonText,
-                hemisphere === 'NH' && styles.hemisphereButtonTextActive,
-              ]}
-            >
+            <Text style={[styles.hemisphereButtonText, hemisphere === 'NH' && styles.hemisphereButtonTextActive]}>
               Northern Hemisphere
             </Text>
-            <Text style={styles.hemisphereSubtext}>North America, Europe, Asia, Northern Africa</Text>
+            <Text style={styles.hemisphereSubtext}>
+              North America, Europe, Asia, Northern Africa
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -359,7 +334,8 @@ export default function TabIndex() {
             <Calendar size={20} color="#8b9dc3" />
           </View>
           <CosmicInput
-            placeholder="Birth Date (DD/MM/YYYY)"
+            label="Birth Date"
+            placeholder="DD/MM/YYYY"
             value={birthDate}
             onChangeText={setBirthDate}
             keyboardType="numeric"
@@ -370,7 +346,8 @@ export default function TabIndex() {
             <Clock size={20} color="#8b9dc3" />
           </View>
           <CosmicInput
-            placeholder="Birth Time (HH:MM AM/PM)"
+            label="Birth Time"
+            placeholder="HH:MM or HH:MM AM/PM"
             value={birthTime}
             onChangeText={setBirthTime}
           />
@@ -380,7 +357,8 @@ export default function TabIndex() {
             <MapPin size={20} color="#8b9dc3" />
           </View>
           <CosmicInput
-            placeholder="Birth Location (City, Country)"
+            label="Birth Location"
+            placeholder="City, Country"
             value={birthLocation}
             onChangeText={setBirthLocation}
           />
@@ -395,7 +373,7 @@ export default function TabIndex() {
 
       <View style={styles.calculateButton}>
         <CosmicButton
-          title={calculating ? "Calculating..." : "Calculate My Cusp"}
+          title={calculating ? 'Calculating...' : 'Calculate My Cusp'}
           onPress={handleCalculate}
           disabled={calculating}
           loading={calculating}
@@ -422,18 +400,18 @@ export default function TabIndex() {
           <Text style={styles.secondarySign}>{result?.secondarySign}</Text>
         </View>
 
-        {result?.cuspName && (
+        {!!result?.cuspName && (
           <Text style={styles.cuspName}>{normalizeCuspLabel(result.cuspName)}</Text>
         )}
 
-        {result?.description && (
+        {!!result?.description && (
           <Text style={styles.description}>{result.description}</Text>
         )}
 
         <View style={styles.detailsContainer}>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Hemisphere</Text>
-            <Text style={styles.detailValue}>{hemisphere === 'NH' ? 'Northern' : 'Southern'}</Text>
+            <Text style={styles.detailValue}>{toLongHemisphere(hemisphere)}</Text>
           </View>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Birth Date</Text>
@@ -477,7 +455,7 @@ export default function TabIndex() {
         </View>
       </LinearGradient>
 
-      {astronomicalInsight && (
+      {!!astronomicalInsight && (
         <LinearGradient
           colors={['rgba(139, 157, 195, 0.12)', 'rgba(212, 175, 55, 0.06)']}
           style={styles.contextCard}
@@ -488,19 +466,11 @@ export default function TabIndex() {
       )}
 
       <View style={styles.button}>
-        <CosmicButton
-          title="Save to Profile"
-          onPress={handleSaveResult}
-          variant="secondary"
-        />
+        <CosmicButton title="Save to Profile" onPress={handleSaveResult} variant="secondary" />
       </View>
 
       <View style={styles.button}>
-        <CosmicButton
-          title="Calculate Another"
-          onPress={handleStartOver}
-          variant="outline"
-        />
+        <CosmicButton title="Calculate Another" onPress={handleStartOver} variant="outline" />
       </View>
     </View>
   );
@@ -509,11 +479,11 @@ export default function TabIndex() {
     <View style={styles.container}>
       <CosmicBackground />
       <SafeAreaView style={styles.safeArea}>
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.keyboardAvoidingView}
         >
-          <ScrollView 
+          <ScrollView
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
@@ -531,6 +501,7 @@ const styles = StyleSheet.create({
   keyboardAvoidingView: { flex: 1 },
   safeArea: { flex: 1 },
   scrollContent: { flexGrow: 1, paddingHorizontal: 24, paddingBottom: 120 },
+
   formContainer: { flex: 1, justifyContent: 'center', paddingTop: 60 },
   resultContainer: { flex: 1, justifyContent: 'center', paddingTop: 60 },
 
@@ -539,6 +510,7 @@ const styles = StyleSheet.create({
     marginBottom: 32,
     ...Platform.select({
       web: {
+        // @ts-ignore web-only filter
         filter: 'drop-shadow(0px 0px 15px rgba(212, 175, 55, 0.3))',
       },
       default: {
@@ -554,6 +526,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     ...Platform.select({
       web: {
+        // @ts-ignore web-only filter
         filter: 'drop-shadow(0px 0px 15px rgba(212, 175, 55, 0.3))',
       },
       default: {
@@ -566,127 +539,265 @@ const styles = StyleSheet.create({
   },
 
   title: {
-    fontSize: 36,
-    fontFamily: 'PlayfairDisplay-Bold',
-    color: '#e8e8e8',
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#e5e7eb',
     textAlign: 'center',
-    marginBottom: 16,
-    letterSpacing: 2,
+    marginBottom: 8,
   },
   subtitle: {
     fontSize: 16,
-    fontFamily: 'Inter-Regular',
-    color: '#8b9dc3',
+    color: '#aab4d4',
     textAlign: 'center',
-    marginBottom: 40,
-    lineHeight: 24,
+    marginBottom: 24,
+    lineHeight: 22,
   },
 
-  sectionTitle: { fontSize: 18, fontFamily: 'Inter-Medium', color: '#e8e8e8', marginBottom: 8, textAlign: 'center' },
-  hemisphereSection: { marginBottom: 32 },
+  hemisphereSection: {
+    marginTop: 8,
+    marginBottom: 24,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#e5e7eb',
+    marginBottom: 8,
+  },
   hemisphereNote: {
-    fontSize: 14,
-    fontFamily: 'Inter-Regular',
-    color: '#8b9dc3',
-    textAlign: 'center',
-    marginBottom: 16,
-    lineHeight: 20,
+    fontSize: 13,
+    color: '#aab4d4',
+    marginBottom: 12,
   },
-  hemisphereButtons: { gap: 12 },
+  hemisphereButtons: {
+    gap: 12,
+  },
   hemisphereButton: {
-    paddingHorizontal: 24,
-    paddingVertical: 16,
-    borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
-    backgroundColor: 'rgba(26, 26, 46, 0.2)',
+    borderColor: 'rgba(212,175,55,0.25)',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(139,157,195,0.06)',
   },
-  hemisphereButtonActive: { backgroundColor: 'rgba(212, 175, 55, 0.2)', borderColor: '#d4af37' },
-  hemisphereButtonText: { fontSize: 16, fontFamily: 'Inter-Medium', color: '#8b9dc3', textAlign: 'center', marginBottom: 4 },
-  hemisphereButtonTextActive: { color: '#d4af37' },
-  hemisphereSubtext: { fontSize: 12, fontFamily: 'Inter-Regular', color: '#8b9dc3', textAlign: 'center', opacity: 0.8 },
+  hemisphereButtonActive: {
+    backgroundColor: 'rgba(212,175,55,0.12)',
+    borderColor: 'rgba(212,175,55,0.45)',
+  },
+  hemisphereButtonText: {
+    color: '#e5e7eb',
+    fontWeight: '700',
+    fontSize: 15,
+    marginBottom: 4,
+  },
+  hemisphereButtonTextActive: {
+    color: '#f3f4f6',
+  },
+  hemisphereSubtext: {
+    color: '#aab4d4',
+    fontSize: 12,
+    lineHeight: 16,
+  },
 
-  inputSection: { marginBottom: 24 },
-  inputWithIcon: { position: 'relative' },
-  inputIcon: { position: 'absolute', top: 40, left: 16, zIndex: 1 },
+  inputSection: {
+    marginTop: 8,
+  },
+  inputWithIcon: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 10,
+  },
+  inputIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(139,157,195,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(139,157,195,0.25)',
+  },
+  birthTimeNote: {
+    marginTop: 8,
+    backgroundColor: 'rgba(139,157,195,0.08)',
+    borderColor: 'rgba(139,157,195,0.25)',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+  },
+  birthTimeNoteText: {
+    color: '#c7d2fe',
+    fontSize: 12,
+    lineHeight: 18,
+  },
 
-  calculateButton: { marginTop: 24 },
+  calculateButton: { marginTop: 16 },
 
   resultCard: {
-    borderRadius: 16,
-    padding: 24,
-    marginBottom: 24,
+    borderRadius: 18,
+    padding: 18,
     borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
-    ...Platform.select({
-      web: {
-        boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.25)',
-      },
-      default: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 8,
-        elevation: 5,
-      },
-    }),
+    borderColor: 'rgba(212,175,55,0.25)',
+    backgroundColor: 'rgba(12,16,28,0.4)',
+    marginBottom: 16,
   },
   resultTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#e5e7eb',
+    marginBottom: 12,
+  },
+  signContainer: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  primarySign: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#f3f4f6',
+  },
+  cuspConnector: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#d4af37',
+  },
+  secondarySign: {
     fontSize: 20,
-    fontFamily: 'PlayfairDisplay-Bold',
+    fontWeight: '700',
+    color: '#e5e7eb',
+  },
+  cuspName: {
+    fontSize: 14,
     color: '#d4af37',
     textAlign: 'center',
-    marginBottom: 24,
+    marginBottom: 8,
   },
-  signContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
-  primarySign: { fontSize: 32, fontFamily: 'PlayfairDisplay-Bold', color: '#e8e8e8' },
-  cuspConnector: { fontSize: 24, fontFamily: 'PlayfairDisplay-Bold', color: '#d4af37', marginHorizontal: 16 },
-  secondarySign: { fontSize: 32, fontFamily: 'PlayfairDisplay-Bold', color: '#e8e8e8' },
-  cuspName: { fontSize: 16, fontFamily: 'Inter-Medium', color: '#d4af37', textAlign: 'center', marginBottom: 20 },
-  description: { fontSize: 16, fontFamily: 'Inter-Regular', color: '#e8e8e8', textAlign: 'center', lineHeight: 24, marginBottom: 20 },
+  description: {
+    fontSize: 14,
+    color: '#cbd5e1',
+    lineHeight: 20,
+    marginBottom: 12,
+  },
 
-  detailsContainer: { paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(212, 175, 55, 0.2)', gap: 8, marginBottom: 20 },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  detailLabel: { fontSize: 14, fontFamily: 'Inter-Medium', color: '#8b9dc3' },
-  detailValue: { fontSize: 14, fontFamily: 'Inter-SemiBold', color: '#d4af37' },
+  detailsContainer: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(139,157,195,0.25)',
+    paddingTop: 12,
+    marginTop: 8,
+    gap: 8,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  detailLabel: {
+    color: '#aab4d4',
+    fontSize: 13,
+  },
+  detailValue: {
+    color: '#e5e7eb',
+    fontSize: 13,
+    fontWeight: '600',
+  },
 
-  birthstoneContainer: { marginBottom: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(212, 175, 55, 0.2)' },
-  birthstoneHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  birthstoneTitle: { fontSize: 14, fontFamily: 'Inter-Medium', color: '#d4af37', marginLeft: 8 },
-  birthstoneMeaning: { fontSize: 14, fontFamily: 'Inter-Regular', color: '#8b9dc3', lineHeight: 20 },
+  birthstoneContainer: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: 'rgba(212,175,55,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.25)',
+  },
+  birthstoneHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  birthstoneTitle: {
+    color: '#f1e9c6',
+    fontWeight: '800',
+  },
+  birthstoneMeaning: {
+    color: '#e5e7eb',
+    fontSize: 13,
+    lineHeight: 18,
+  },
 
-  actionButtons: { gap: 12, marginTop: 8 },
+  actionButtons: {
+    marginTop: 12,
+    gap: 10,
+  },
   detailsButton: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8,
-    backgroundColor: 'rgba(212, 175, 55, 0.1)', borderWidth: 1, borderColor: 'rgba(212, 175, 55, 0.3)',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.35)',
+    backgroundColor: 'rgba(212,175,55,0.08)',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  detailsButtonText: { fontSize: 14, fontFamily: 'Inter-SemiBold', color: '#d4af37', marginRight: 8 },
+  detailsButtonText: {
+    color: '#f1e9c6',
+    fontWeight: '700',
+  },
   signDetailsButton: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8,
-    backgroundColor: 'rgba(212, 175, 55, 0.1)', borderWidth: 1, borderColor: 'rgba(212, 175, 55, 0.3)',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.35)',
+    backgroundColor: 'rgba(212,175,55,0.08)',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  signDetailsButtonText: { fontSize: 14, fontFamily: 'Inter-SemiBold', color: '#d4af37', marginRight: 8 },
+  signDetailsButtonText: {
+    color: '#f1e9c6',
+    fontWeight: '700',
+  },
   horoscopeButton: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8,
-    backgroundColor: 'rgba(139, 157, 195, 0.1)', borderWidth: 1, borderColor: 'rgba(139, 157, 195, 0.3)',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(139,157,195,0.35)',
+    backgroundColor: 'rgba(139,157,195,0.1)',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  horoscopeButtonText: { fontSize: 14, fontFamily: 'Inter-SemiBold', color: '#8b9dc3', marginRight: 8 },
+  horoscopeButtonText: {
+    color: '#aab4d4',
+    fontWeight: '700',
+  },
 
   contextCard: {
-    borderRadius: 16, padding: 20, marginBottom: 24,
-    borderWidth: 1, borderColor: 'rgba(139, 157, 195, 0.3)',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(139,157,195,0.25)',
+    backgroundColor: 'rgba(12,16,28,0.35)',
+    marginTop: 12,
+    marginBottom: 8,
   },
-  contextTitle: { fontSize: 18, fontFamily: 'PlayfairDisplay-Bold', color: '#8b9dc3', textAlign: 'center', marginBottom: 12 },
-  contextText: { fontSize: 14, fontFamily: 'Inter-Regular', color: '#e8e8e8', textAlign: 'center', lineHeight: 20 },
-
-  button: { marginTop: 16 },
-
-  birthTimeNote: {
-    backgroundColor: 'rgba(139, 157, 195, 0.1)', borderRadius: 8, padding: 12, marginTop: 8,
-    borderWidth: 1, borderColor: 'rgba(139, 157, 195, 0.2)',
+  contextTitle: {
+    color: '#e5e7eb',
+    fontWeight: '800',
+    marginBottom: 6,
   },
-  birthTimeNoteText: { fontSize: 12, fontFamily: 'Inter-Regular', color: '#e8e8e8', textAlign: 'center', lineHeight: 16 },
+  contextText: {
+    color: '#cbd5e1',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+
+  button: {
+    marginTop: 8,
+  },
 });
