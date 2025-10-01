@@ -15,7 +15,6 @@ import { useFocusEffect } from '@react-navigation/native';
 import {
   Star,
   Moon,
-  Eye,
   Crown,
   Telescope,
   Gem,
@@ -30,7 +29,7 @@ import HoroscopeHeader from '../../components/HoroscopeHeader';
 import { getUserData, type UserProfile } from '../../utils/userData';
 import { getSubscriptionStatus } from '../../utils/billing';
 
-// 🔄 Use your daily.ts API (horoscope_cache)
+// ✅ Use daily.ts for horoscope_cache
 import { getAccessibleHoroscope as getDailyAccessible } from '../../utils/daily';
 
 import {
@@ -57,7 +56,7 @@ function stripVersionSuffix(v?: string) {
 }
 
 /* -------------------------
- * Date helpers (fix stale daily content)
+ * Date helpers
  * ------------------------- */
 function getUTCMidnightForLocalDay(localNow = new Date()): Date {
   const y = localNow.getFullYear();
@@ -99,6 +98,7 @@ export default function AstrologyScreen() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [hasAccess, setHasAccess] = useState<boolean>(false);
 
+  // Daily content from horoscope_cache
   const [daily, setDaily] = useState<{
     date?: string;
     sign?: string;
@@ -170,7 +170,6 @@ export default function AstrologyScreen() {
           debug: true,
         });
         
-        // 🔍 DEBUG LOGS ADDED HERE
         console.log('🔍 [astrology] Daily data received:', d);
         console.log('🔍 [astrology] daily.daily value:', d?.daily);
         console.log('🔍 [astrology] daily.affirmation value:', d?.affirmation);
@@ -284,7 +283,6 @@ export default function AstrologyScreen() {
           const dailyUser = buildDailyUser(u, signResolved, hemiResolved);
           const d = await getDailyAccessible(dailyUser, { useCache: true, debug: true });
           
-          // 🔍 DEBUG LOGS ADDED HERE TOO
           console.log('🔍 [astrology INIT] Daily data received:', d);
           console.log('🔍 [astrology INIT] daily.daily value:', d?.daily);
           console.log('🔍 [astrology INIT] daily.affirmation value:', d?.affirmation);
@@ -374,7 +372,6 @@ export default function AstrologyScreen() {
         const dailyUser = buildDailyUser(user, effectiveSign, resolvedHemisphere);
         const d = await getDailyAccessible(dailyUser, { useCache: true, debug: true });
         
-        // 🔍 DEBUG LOGS FOR REFRESH
         console.log('🔍 [astrology REFRESH] Daily data received:', d);
         console.log('🔍 [astrology REFRESH] daily.daily value:', d?.daily);
         
@@ -606,8 +603,6 @@ export default function AstrologyScreen() {
               </Text>
             </LinearGradient>
           )}
-
-          
 
           {!hasAccess && (
             <LinearGradient colors={['rgba(212, 175, 55, 0.2)', 'rgba(212, 175, 55, 0.1)']} style={styles.upgradeCard}>
