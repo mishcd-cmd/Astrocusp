@@ -35,7 +35,7 @@ export async function getLatestForecast(
 
     // Try exact (cusp or pure)
     let { data, error } = await supabase
-      .from<ForecastRow>('monthly_forecasts') // ✅ no "public." prefix
+      .from('monthly_forecasts') // ✅ no "public." prefix
       .select('id,date,sign,hemisphere,monthly_forecast')
       .eq('hemisphere', hemi)
       .eq('sign', exactSign)
@@ -47,20 +47,24 @@ export async function getLatestForecast(
     if (!data && !error && exactSign.includes('–')) {
       const primary = exactSign.split('–')[0];
       const fb = await supabase
-        .from<ForecastRow>('monthly_forecasts')
+        .from('monthly_forecasts')
         .select('id,date,sign,hemisphere,monthly_forecast')
         .eq('hemisphere', hemi)
         .eq('sign', primary)
         .order('date', { ascending: false })
         .limit(1)
         .maybeSingle();
+
       data = fb.data as any;
       error = fb.error as any;
     }
 
     if (error) return { ok: false, reason: error.message };
     if (!data) return { ok: false, reason: 'not_found' };
-    return { ok: true, row: data };
+
+    // Narrow type at the end:
+    const row = data as ForecastRow;
+    return { ok: true, row };
   } catch (e: any) {
     return { ok: false, reason: e?.message || 'unknown' };
   }

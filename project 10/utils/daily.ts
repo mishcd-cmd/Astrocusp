@@ -4,14 +4,13 @@ import { supabase } from './supabase';
 export type DailyRow = {
   date: string;                 // YYYY-MM-DD
   sign: string;                 // UPPERCASE, cusps like 'ARIES–TAURUS'
-  hemisphere: string;           // could be 'NH'/'SH' or 'Northern'/'Southern'
+  hemisphere: string;           // 'NH'/'SH' or 'Northern'/'Southern', etc.
   daily_horoscope?: string;
   affirmation?: string;
   deeper_insight?: string;
   celestial_insight?: string;
 };
 
-// Your exact daily table name:
 const DAILY_TABLE = 'horoscope_cache'; // ✅ no "public." prefix
 
 function normaliseDailySign(label: string) {
@@ -43,7 +42,7 @@ export async function getDaily(
     const hemiSet = dailyHemisphereOptions(hemisphereLabel);
 
     const { data, error } = await supabase
-      .from<DailyRow>(DAILY_TABLE)
+      .from(DAILY_TABLE)
       .select('date,sign,hemisphere,daily_horoscope,affirmation,deeper_insight,celestial_insight')
       .eq('date', dateISO)
       .eq('sign', sign)
@@ -54,7 +53,8 @@ export async function getDaily(
     if (error) return { ok: false, reason: error.message };
     if (!data) return { ok: false, reason: 'not_found' };
 
-    return { ok: true, row: data };
+    const row = data as DailyRow;
+    return { ok: true, row };
   } catch (e: any) {
     return { ok: false, reason: e?.message || 'unknown' };
   }
