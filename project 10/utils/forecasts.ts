@@ -2,56 +2,66 @@
 import { supabase } from './supabase';
 
 export type ForecastRow = {
-  id?: string;
-  date: string;               // ISO date for the month, e.g. "2025-10-01"
-  sign: string;               // stored lowercase in DB (e.g. "aries-taurus cusp" or "aries")
-  hemisphere: string;         // "Northern" | "Southern"  (or "NH"/"SH" if that's your schema—adjust below)
-  monthly_forecast: string;   // <-- IMPORTANT: the text column your UI reads
-  created_at?: string;
-  updated_at?: string;
+  id?: number | string;
+  date: string;                 // e.g. 2025-10-01
+  sign: string;                 // stored lowercase in monthly_forecasts
+  hemisphere: string;           // 'northern' | 'southern'
+  monthly_forecast?: string;
 };
 
-/**
- * Normalizes a human label to the sign format used in your monthly table
- * - lowercases
- * - trims " cusp" suffix punctuation variants
- */
-function normalizeMonthlySign(label: string) {
-  const s = (label || '').toLowerCase().trim();
-  // Keep full cusp names, just normalize dashes to "–" or vice versa consistently if needed
-  return s
-    .replace(/\s*-\s*/g, '–')      // unify hyphen to en-dash
-    .replace(/\s+cusp$/, ' cusp'); // normalize trailing spacing
+function normaliseMonthlySign(label: string) {
+  // Keep en dash for cusps, strip trailing "cusp", lowercase
+  const trimmed = (label || '').trim();
+  const noCuspWord = trimmed.replace(/\s*cusp.*$/i, '');
+  const withEnDash = noCuspWord.replace(/\s*-\s*/g, '–');
+  return withEnDash.toLowerCase();
+}
+
+function normaliseMonthlyHemisphere(h: string) {
+  const s = (h || '').toLowerCase();
+  return s.startsWith('s') ? 'southern' : 'northern';
 }
 
 /**
- * If your monthly table stores "NH"/"SH" instead of full words, flip this flag
+ * Fetch latest monthly forecast for a (cusp or pure) sign + hemisphere.
  */
-const MONTHLY_HEMI_IS_FULL_WORDS = true; // set false if your schema is "NH"/"SH"
+export async function getLatestForecast(
+  signLabel: string,
+  hemisphereLabel: string
+): Promise<{ ok: boolean; row?: ForecastRow; reason?: string }> {
+  try {
+    const hemi = normaliseMonthlyHemisphere(hemisphereLabel);
+    const exactSign = normaliseMonthlySign(signLabel);
 
-function normalizeMonthlyHemisphere(h: string) {
-  if (MONTHLY_HEMI_IS_FULL_WORDS) return h; // "Northern"/"Southern"
-  return /^n/i.test(h) ? 'NH' : 'SH';
-}
+    // Try exact (cusp or pure)
+    let { data, error } = await supabase
+      .from<ForecastRow>('monthly_forecasts') // ✅ no "public." prefix
+      .select('id,date,sign,hemisphere,monthly_forecast')
+      .eq('hemisphere', hemi)
+      .eq('sign', exactSign)
+      .order('date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-export async function getLatestForecast(signLabel: string, hemisphereLabel: string) {
-  const sign = normalizeMonthlySign(signLabel);
-  const hemisphere = normalizeMonthlyHemisphere(hemisphereLabel);
+    // If not found and it’s a cusp, fall back to the first sign (e.g. 'aries–taurus' → 'aries')
+    if (!data && !error && exactSign.includes('–')) {
+      const primary = exactSign.split('–')[0];
+      const fb = await supabase
+        .from<ForecastRow>('monthly_forecasts')
+        .select('id,date,sign,hemisphere,monthly_forecast')
+        .eq('hemisphere', hemi)
+        .eq('sign', primary)
+        .order('date', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      data = fb.data as any;
+      error = fb.error as any;
+    }
 
-  const { data, error } = await supabase
-    .from('monthly_forecasts')
-    .select('id,date,sign,hemisphere,monthly_forecast,created_at,updated_at')
-    .eq('sign', sign)
-    .eq('hemisphere', hemisphere)
-    .order('date', { ascending: false })
-    .limit(1)
-    .maybeSingle<ForecastRow>();
-
-  if (error) {
-    return { ok: false as const, row: null, reason: error.message };
+    if (error) return { ok: false, reason: error.message };
+    if (!data) return { ok: false, reason: 'not_found' };
+    return { ok: true, row: data };
+  } catch (e: any) {
+    return { ok: false, reason: e?.message || 'unknown' };
   }
-  if (!data) {
-    return { ok: false as const, row: null, reason: 'not_found' };
-  }
-  return { ok: true as const, row: data, reason: null };
 }
