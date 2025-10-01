@@ -15,6 +15,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import {
   Star,
   Moon,
+  Eye,
   Crown,
   Telescope,
   Gem,
@@ -29,13 +30,14 @@ import HoroscopeHeader from '../../components/HoroscopeHeader';
 import { getUserData, type UserProfile } from '../../utils/userData';
 import { getSubscriptionStatus } from '../../utils/billing';
 
-// ✅ use your working daily helper
-import { getAccessibleHoroscope } from '../../utils/daily';
+// 🔄 Use your daily.ts API (horoscope_cache)
+import { getAccessibleHoroscope as getDailyAccessible } from '../../utils/daily';
 
 import {
   getHemisphereEvents,
   getCurrentPlanetaryPositionsEnhanced,
   getVisibleConstellationsEnhanced,
+  // ❌ removed getSpaceHighlights / SpaceHighlights (not exported in your utils/astronomy)
 } from '../../utils/astronomy';
 import { getLunarNow } from '../../utils/lunar';
 import { getCuspGemstoneAndRitual } from '../../utils/cuspData';
@@ -44,7 +46,7 @@ import { useHemisphere } from '../../providers/HemisphereProvider';
 import HemisphereToggle from '../../components/HemisphereToggle';
 import { getAstrologicalHouse } from '../../utils/zodiacData';
 
-// Optional: show your DB daily table under Planetary block
+// ✅ DailyReadings (already placed)
 import DailyReadings from '../../components/DailyReadings';
 
 /* -------------------------
@@ -61,6 +63,8 @@ function stripVersionSuffix(v?: string) {
 /* -------------------------
  * Date helpers (fix stale daily content)
  * ------------------------- */
+// Returns a Date set to **UTC midnight** for the user's **local** calendar day.
+// This makes lookups deterministic per local day, regardless of timezone.
 function getUTCMidnightForLocalDay(localNow = new Date()): Date {
   const y = localNow.getFullYear();
   const m = localNow.getMonth();
@@ -68,21 +72,24 @@ function getUTCMidnightForLocalDay(localNow = new Date()): Date {
   return new Date(Date.UTC(y, m, d, 0, 0, 0, 0));
 }
 
+// Milliseconds until next local midnight
 function msUntilNextLocalMidnight(now = new Date()): number {
   const next = new Date(now);
   next.setHours(24, 0, 0, 0);
   return next.getTime() - now.getTime();
 }
 
-type HoroscopeData = {
-  date: string;
-  sign: string;
-  hemisphere: 'Northern' | 'Southern';
-  daily: string;
-  affirmation: string;
-  deeper: string;
-  raw: any;
-};
+/** Build a minimal "user" shape for utils/daily.getAccessibleHoroscope */
+function buildDailyUser(base: any, signLabel: string, hemi: 'Northern' | 'Southern') {
+  const isCusp = /\bcusp\b/i.test(signLabel);
+  return {
+    id: base?.id,
+    email: base?.email,
+    hemisphere: hemi,
+    preferred_sign: signLabel,
+    cuspResult: isCusp ? { cuspName: signLabel } : { primarySign: signLabel },
+  };
+}
 
 export default function AstrologyScreen() {
   const router = useRouter();
@@ -101,7 +108,17 @@ export default function AstrologyScreen() {
 
   const [user, setUser] = useState<UserProfile | null>(null);
   const [hasAccess, setHasAccess] = useState<boolean>(false);
-  const [horoscope, setHoroscope] = useState<HoroscopeData | null>(null);
+
+  // Daily content (from utils/daily → horoscope_cache)
+  const [daily, setDaily] = useState<{
+    date?: string;
+    sign?: string;
+    hemisphere?: string;
+    daily?: string;
+    affirmation?: string;
+    deeper?: string;
+  } | null>(null);
+
   const [error, setError] = useState<string | null>(null);
 
   // UI state
@@ -140,7 +157,7 @@ export default function AstrologyScreen() {
     return resolvedSign || selectedSign || '';
   }, [resolvedSign, selectedSign]);
 
-  // The **service date** we send to Supabase (UTC midnight for today's local date)
+  // The **service date** we align to (UTC midnight for today's local date)
   const serviceDateUTC = useMemo(() => {
     const d = getUTCMidnightForLocalDay();
     console.log('📅 [astrology] serviceDateUTC →', d.toISOString());
@@ -158,23 +175,19 @@ export default function AstrologyScreen() {
     return astronomicalEvents || [];
   }, [astronomicalEvents, resolvedHemisphere]);
 
-  // Refetch when hemisphere changes
+  // Refetch daily + constellations when hemisphere/sign changes (and after init ready)
   useEffect(() => {
     if (!effectiveSign || !ready) return;
     let cancelled = false;
     (async () => {
       try {
-        const effectiveUser = {
-          ...(user || {}),
-          hemisphere: resolvedHemisphere,
-          cuspResult: (user?.cuspResult ?? {
-            cuspName: effectiveSign,
-            primarySign: effectiveSign,
-            isOnCusp: /cusp/i.test(String(effectiveSign)),
-          }),
-        };
-        const data = await getAccessibleHoroscope(effectiveUser, { debug: true });
-        if (!cancelled) setHoroscope((data as any) || null);
+        // Build a synthetic "user" for daily.ts
+        const dailyUser = buildDailyUser(user, effectiveSign, resolvedHemisphere);
+        const d = await getDailyAccessible(dailyUser, {
+          useCache: true,
+          debug: true, // keep for now; set false to quiet logs
+        });
+        if (!cancelled) setDaily(d || null);
 
         // refresh constellations on hemisphere change
         try {
@@ -184,7 +197,7 @@ export default function AstrologyScreen() {
           if (!cancelled) setVisibleConstellations([]);
         }
       } catch (err) {
-        if (!cancelled) console.error('❌ [astrology] Hemisphere fetch error:', err);
+        if (!cancelled) console.error('❌ [astrology] Hemisphere/sign fetch error:', err);
       }
     })();
     return () => {
@@ -192,14 +205,14 @@ export default function AstrologyScreen() {
     };
   }, [effectiveSign, resolvedHemisphere, ready, serviceDateUTC, user]);
 
-  // Auto flip dayTick at local midnight
+  // Auto flip dayTick at **local midnight** so content rolls to the new day
   useEffect(() => {
     const ms = msUntilNextLocalMidnight();
     const t = setTimeout(() => setDayTick(tick => tick + 1), ms + 1000);
     return () => clearTimeout(t);
   }, [dayTick]);
 
-  // Refetch on screen focus
+  // Also refetch when the screen regains focus (e.g. app slept overnight)
   useFocusEffect(
     useCallback(() => {
       if (ready) {
@@ -224,6 +237,7 @@ export default function AstrologyScreen() {
       try {
         console.log('🚀 [astrology] Starting one-time init...');
 
+        // ensure auth
         try {
           await getUserData();
         } catch (authError: any) {
@@ -284,18 +298,15 @@ export default function AstrologyScreen() {
           return;
         }
 
-        // ✅ Load horoscope via daily helper
-        const effectiveUser = {
-          ...(u || {}),
-          hemisphere: hemiResolved,
-          cuspResult: (u?.cuspResult ?? {
-            cuspName: signResolved,
-            primarySign: signResolved,
-            isOnCusp: /cusp/i.test(String(signResolved)),
-          }),
-        };
-        const data = await getAccessibleHoroscope(effectiveUser, { debug: true });
-        setHoroscope((data as any) || null);
+        // 🔮 DAILY (horoscope_cache via utils/daily)
+        try {
+          const dailyUser = buildDailyUser(u, signResolved, hemiResolved);
+          const d = await getDailyAccessible(dailyUser, { useCache: true, debug: true });
+          setDaily(d || null);
+        } catch (e) {
+          console.warn('[astrology] daily fetch error:', e);
+          setDaily(null);
+        }
 
         // Astronomical context
         const lunar = getLunarNow(hemiResolved);
@@ -313,6 +324,10 @@ export default function AstrologyScreen() {
           setVisibleConstellations([]);
         }
 
+        // Language preference
+        const language = await getUserLanguage();
+        setCurrentLanguage(language);
+
         console.log('✅ [astrology] Init complete');
       } catch (err: any) {
         console.error('❌ [astrology] Init error:', err);
@@ -329,42 +344,43 @@ export default function AstrologyScreen() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serviceDateUTC]);
+  }, [serviceDateUTC]); // include serviceDateUTC: if app launches after midnight, we fetch the right day
 
-  // Translation effect
+  // Translation effect (Chinese only)
   useEffect(() => {
     const run = async () => {
-      if (currentLanguage !== 'zh' || !horoscope) {
+      if (currentLanguage !== 'zh' || !daily) {
         setTranslatedContent({});
         return;
       }
       try {
         const translations: any = {};
-        if (horoscope.daily) translations.daily = await translateText(asString(horoscope.daily), currentLanguage);
-        if (horoscope.affirmation)
-          translations.affirmation = await translateText(stripVersionSuffix(horoscope.affirmation), currentLanguage);
-        if (horoscope.deeper)
-          translations.deeper = await translateText(stripVersionSuffix(horoscope.deeper), currentLanguage);
+        if (daily.daily) translations.daily = await translateText(asString(daily.daily), currentLanguage);
+        if (daily.affirmation)
+          translations.affirmation = await translateText(stripVersionSuffix(daily.affirmation), currentLanguage);
+        if (daily.deeper)
+          translations.deeper = await translateText(stripVersionSuffix(daily.deeper), currentLanguage);
         setTranslatedContent(translations);
       } catch (error) {
         console.error('Translation error:', error);
         setTranslatedContent({
-          daily: asString(horoscope.daily),
-          affirmation: stripVersionSuffix(horoscope.affirmation),
-          deeper: stripVersionSuffix(horoscope.deeper),
+          daily: asString(daily.daily),
+          affirmation: stripVersionSuffix(daily.affirmation),
+          deeper: stripVersionSuffix(daily.deeper),
         });
       }
     };
     run();
-  }, [currentLanguage, horoscope, hasAccess]);
+  }, [currentLanguage, daily, hasAccess]);
 
   const getDisplayText = (original?: string) => {
     const base = asString(original);
     if (currentLanguage !== 'zh') return base;
-    if (horoscope?.daily && base === asString(horoscope.daily)) return translatedContent.daily ?? base;
-    if (horoscope?.affirmation && base === stripVersionSuffix(horoscope.affirmation))
-      return translatedContent.affirmation ?? base;
-    if (horoscope?.deeper && base === stripVersionSuffix(horoscope.deeper)) return translatedContent.deeper ?? base;
+    // ✅ avoid mixing || and ?? precedence issues
+    if (daily?.daily && base === asString(daily.daily)) return (translatedContent.daily ?? base);
+    if (daily?.affirmation && base === stripVersionSuffix(daily.affirmation))
+      return (translatedContent.affirmation ?? base);
+    if (daily?.deeper && base === stripVersionSuffix(daily.deeper)) return (translatedContent.deeper ?? base);
     return base;
   };
 
@@ -374,17 +390,9 @@ export default function AstrologyScreen() {
     if (!silent) setRefreshing(true);
     try {
       if (effectiveSign) {
-        const effectiveUser = {
-          ...(user || {}),
-          hemisphere: resolvedHemisphere,
-          cuspResult: (user?.cuspResult ?? {
-            cuspName: effectiveSign,
-            primarySign: effectiveSign,
-            isOnCusp: /cusp/i.test(String(effectiveSign)),
-          }),
-        };
-        const data = await getAccessibleHoroscope(effectiveUser, { debug: true });
-        setHoroscope((data as any) || null);
+        const dailyUser = buildDailyUser(user, effectiveSign, resolvedHemisphere);
+        const d = await getDailyAccessible(dailyUser, { useCache: true, debug: true });
+        setDaily(d || null);
       }
       const now = Date.now();
       if (now - lastSubCheck.current > 120_000) {
@@ -419,7 +427,7 @@ export default function AstrologyScreen() {
         </SafeAreaView>
       </View>
     );
-  }
+    }
 
   if (error) {
     return (
@@ -457,19 +465,19 @@ export default function AstrologyScreen() {
           <Text style={styles.hemisphereDisplay}>{resolvedHemisphere} Hemisphere</Text>
           <HemisphereToggle />
 
-          {/* Daily Horoscope (from utils/daily.ts) */}
-          {horoscope?.daily ? (
+          {/* Daily Horoscope — from horoscope_cache via utils/daily */}
+          {daily?.daily && (
             <LinearGradient colors={['rgba(139, 157, 195, 0.2)', 'rgba(139, 157, 195, 0.1)']} style={styles.horoscopeCard}>
               <View style={styles.cardHeader}>
                 <Star size={20} color="#8b9dc3" />
                 <Text style={styles.cardTitle}>Today's Guidance</Text>
               </View>
-              <Text style={styles.horoscopeText}>{getDisplayText(horoscope.daily)}</Text>
+              <Text style={styles.horoscopeText}>{getDisplayText(daily.daily)}</Text>
             </LinearGradient>
-          ) : null}
+          )}
 
           {/* Premium Content */}
-          {hasAccess && (horoscope?.affirmation ?? '') !== '' && (
+          {hasAccess && asString(daily?.affirmation) !== '' && (
             <LinearGradient colors={['rgba(212, 175, 55, 0.2)', 'rgba(212, 175, 55, 0.1)']} style={styles.premiumCard}>
               <View style={styles.cardHeader}>
                 <Sparkles size={20} color="#d4af37" />
@@ -478,11 +486,12 @@ export default function AstrologyScreen() {
                   <Crown size={12} color="#1a1a2e" />
                 </View>
               </View>
-              <Text style={styles.affirmationText}>{getDisplayText(stripVersionSuffix(horoscope?.affirmation))}</Text>
+              <Text style={styles.affirmationText}>{getDisplayText(stripVersionSuffix(daily?.affirmation))}</Text>
             </LinearGradient>
           )}
 
-          {hasAccess && (horoscope?.deeper ?? '') !== '' && (
+          {/* Astral Plane (Deeper Insights) */}
+          {hasAccess && asString(daily?.deeper) !== '' && (
             <LinearGradient colors={['rgba(212, 175, 55, 0.2)', 'rgba(212, 175, 55, 0.1)']} style={styles.premiumCard}>
               <View style={styles.cardHeader}>
                 <Crown size={20} color="#d4af37" />
@@ -491,7 +500,7 @@ export default function AstrologyScreen() {
                   <Crown size={12} color="#1a1a2e" />
                 </View>
               </View>
-              <Text style={styles.deeperText}>{getDisplayText(stripVersionSuffix(horoscope?.deeper))}</Text>
+              <Text style={styles.deeperText}>{getDisplayText(stripVersionSuffix(daily?.deeper))}</Text>
             </LinearGradient>
           )}
 
@@ -521,6 +530,8 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
+          {/* Cosmic Perspective — (kept out as you’re focusing on daily data) */}
+
           {/* Lunar Phase */}
           {moonPhase && (
             <LinearGradient colors={['rgba(139, 157, 195, 0.2)', 'rgba(139, 157, 195, 0.1)']} style={styles.lunarCard}>
@@ -546,7 +557,7 @@ export default function AstrologyScreen() {
                 <Text style={styles.cardTitle}>Planetary Influences</Text>
               </View>
               <View style={styles.planetsGrid}>
-                {planetaryPositions.slice(0, 5).map((planet: any) => (
+                {planetaryPositions.slice(0, 5).map((planet) => (
                   <View key={planet.planet} style={styles.planetItem}>
                     <Text style={styles.planetName}>{planet.planet}</Text>
                     <Text style={styles.planetPosition}>
@@ -625,15 +636,11 @@ export default function AstrologyScreen() {
             </LinearGradient>
           )}
 
-          {/* 🔽 Optional: table-driven daily rows under Planetary Influences */}
+          {/* 🔽 DailyReadings block (rendered after Planetary block; uses your new daily table content if you later switch it) */}
           <DailyReadings
-            primarySign={resolvedSign ?? effectiveSign ?? ''}
-            hemisphere={
-              resolvedHemisphere === 'Northern' ? 'Northern'
-              : resolvedHemisphere === 'Southern' ? 'Southern'
-              : null
-            }
-            serviceDateUTC={serviceDateUTC?.toISOString?.() ?? null}
+            primarySign={effectiveSign || null}
+            hemisphere={resolvedHemisphere}
+            serviceDateUTC={serviceDateUTC.toISOString()}
           />
 
           {/* Upgrade CTA */}
@@ -685,13 +692,19 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   cardTitle: { fontSize: 16, fontFamily: 'Vazirmatn-SemiBold', color: '#e8e8e8', marginLeft: 8, flex: 1 },
   premiumBadge: { backgroundColor: '#d4af37', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2, flexDirection: 'row', alignItems: 'center' },
+  cuspBadge: { backgroundColor: '#8b9dc3', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
+  cuspBadgeText: { fontSize: 10, fontFamily: 'Vazirmatn-SemiBold', color: '#1a1a2e', textTransform: 'uppercase', letterSpacing: 1 },
 
   horoscopeText: { fontSize: 18, fontFamily: 'Vazirmatn-Regular', color: '#e8e8e8', lineHeight: 28, textAlign: 'center' },
   affirmationText: { fontSize: 16, fontFamily: 'Vazirmatn-Regular', color: '#e8e8e8', lineHeight: 24, textAlign: 'center', fontStyle: 'italic' },
+  mysticText: { fontSize: 16, fontFamily: 'Vazirmatn-Regular', color: '#e8e8e8', lineHeight: 24, textAlign: 'center' },
   deeperText: { fontSize: 16, fontFamily: 'Vazirmatn-Regular', color: '#e8e8e8', lineHeight: 24, textAlign: 'center' },
 
   gemstoneName: { fontSize: 18, fontFamily: 'Vazirmatn-Bold', color: '#d4af37', textAlign: 'center', marginBottom: 8 },
   gemstoneMeaning: { fontSize: 14, fontFamily: 'Vazirmatn-Regular', color: '#e8e8e8', lineHeight: 20, textAlign: 'center' },
+
+  cosmicCard: { borderRadius: 16, padding: 20, marginBottom: 20, borderWidth: 1, borderColor: 'rgba(139, 157, 195, 0.3)' },
+  cosmicText: { fontSize: 16, fontFamily: 'Inter-Regular', color: '#e8e8e8', lineHeight: 24, textAlign: 'center' },
 
   lunarInfo: { alignItems: 'center' },
   lunarPhase: { fontSize: 20, fontFamily: 'Vazirmatn-Bold', color: '#8b9dc3', marginBottom: 4 },
@@ -719,6 +732,7 @@ const styles = StyleSheet.create({
   houseDescription: { fontSize: 14, fontFamily: 'Vazirmatn-Regular', color: '#8b9dc3', lineHeight: 18 },
   housesNote: { fontSize: 12, fontFamily: 'Vazirmatn-Regular', color: '#8b9dc3', textAlign: 'center', marginTop: 12, fontStyle: 'italic' },
 
+  // Constellations styles
   constellationsCard: {
     borderRadius: 16,
     padding: 20,

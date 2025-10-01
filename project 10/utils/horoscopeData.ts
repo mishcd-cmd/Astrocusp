@@ -139,7 +139,7 @@ export async function getAccessibleHoroscope(
   // Pull all potential matches for this date across the accepted hemisphere variants.
   // (Small result set, then we pick the single best row client-side.)
   const { data, error } = await supabase
-    .from('astrology_cache')
+    .from('horoscope_cache')
     .select('date, hemisphere, sign, daily_horoscope, affirmation, deeper_insight, celestial_insight')
     .eq('date', day)
     .in('hemisphere', hemiChoices as any); // match both 'Northern' & 'NH' (or Southern/SH)
