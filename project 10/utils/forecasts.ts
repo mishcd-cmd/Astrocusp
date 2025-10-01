@@ -1,70 +1,61 @@
 // utils/forecasts.ts
 import { supabase } from './supabase';
 
-export type ForecastRow = {
+export type MonthlyRow = {
   id?: number | string;
-  date: string;                 // e.g. 2025-10-01
-  sign: string;                 // stored lowercase in monthly_forecasts
-  hemisphere: string;           // 'northern' | 'southern'
+  date: string;                 // "2025-10-01" (same for the whole month)
+  sign: string;                 // lowercase; cusp "aries-taurus"
+  hemisphere: 'NH' | 'SH';
   monthly_forecast?: string;
 };
 
-function normaliseMonthlySign(label: string) {
-  // Keep en dash for cusps, strip trailing "cusp", lowercase
-  const trimmed = (label || '').trim();
-  const noCuspWord = trimmed.replace(/\s*cusp.*$/i, '');
-  const withEnDash = noCuspWord.replace(/\s*-\s*/g, '–');
-  return withEnDash.toLowerCase();
+// — helpers —
+function toHyphen(s: string) {
+  // en dash/em dash/strange dashes -> hyphen
+  return (s || '').replace(/[–—]/g, '-');
 }
-
-function normaliseMonthlyHemisphere(h: string) {
-  const s = (h || '').toLowerCase();
-  return s.startsWith('s') ? 'southern' : 'northern';
+function stripCuspWordLower(s: string) {
+  // remove trailing "cusp..." in any case; monthly table does NOT store it
+  return (s || '').replace(/\s*cusp.*$/i, '').trim();
+}
+function normaliseMonthlySign(label: string) {
+  // monthly table keeps lowercase; cusps use hyphen (not en dash) and no "cusp" word
+  return stripCuspWordLower(toHyphen(label)).toLowerCase();
+}
+function resolveMonthlyHemisphere(label: string): 'NH' | 'SH' {
+  const s = (label || '').toLowerCase();
+  if (s.startsWith('s')) return 'SH';
+  if (s === 'sh') return 'SH';
+  return 'NH';
 }
 
 /**
- * Fetch latest monthly forecast for a (cusp or pure) sign + hemisphere.
+ * Get latest monthly forecast for the user’s sign (cusp-aware) and hemisphere (NH/SH).
+ * Tries exact cusp slug first; then falls back to primary sign.
  */
 export async function getLatestForecast(
-  signLabel: string,
-  hemisphereLabel: string
-): Promise<{ ok: boolean; row?: ForecastRow; reason?: string }> {
+  signLabel: string,       // e.g. "Aries–Taurus Cusp" OR "Aries"
+  hemisphereLabel: string  // "Northern"/"Southern"/"NH"/"SH"
+): Promise<{ ok: boolean; row?: MonthlyRow; reason?: string }> {
   try {
-    const hemi = normaliseMonthlyHemisphere(hemisphereLabel);
-    const exactSign = normaliseMonthlySign(signLabel);
+    const exact = normaliseMonthlySign(signLabel);          // "aries-taurus" or "aries"
+    const primary = exact.includes('-') ? exact.split('-')[0] : exact;
+    const hemi = resolveMonthlyHemisphere(hemisphereLabel); // "NH" | "SH"
 
-    // Try exact (cusp or pure)
-    let { data, error } = await supabase
-      .from('monthly_forecasts') // ✅ no "public." prefix
+    // Try cusp+primary together using IN filters (robust to URL encoding)
+    const { data, error } = await supabase
+      .from('monthly_forecasts')
       .select('id,date,sign,hemisphere,monthly_forecast')
       .eq('hemisphere', hemi)
-      .eq('sign', exactSign)
+      .in('sign', Array.from(new Set([exact, primary])))
       .order('date', { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    // If not found and it’s a cusp, fall back to the first sign (e.g. 'aries–taurus' → 'aries')
-    if (!data && !error && exactSign.includes('–')) {
-      const primary = exactSign.split('–')[0];
-      const fb = await supabase
-        .from('monthly_forecasts')
-        .select('id,date,sign,hemisphere,monthly_forecast')
-        .eq('hemisphere', hemi)
-        .eq('sign', primary)
-        .order('date', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      data = fb.data as any;
-      error = fb.error as any;
-    }
-
     if (error) return { ok: false, reason: error.message };
     if (!data) return { ok: false, reason: 'not_found' };
 
-    // Narrow type at the end:
-    const row = data as ForecastRow;
-    return { ok: true, row };
+    return { ok: true, row: data as MonthlyRow };
   } catch (e: any) {
     return { ok: false, reason: e?.message || 'unknown' };
   }
