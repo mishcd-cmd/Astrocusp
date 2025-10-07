@@ -24,12 +24,13 @@ export default function TabLayout() {
             fontFamily: 'Vazirmatn-Medium',
             marginTop: 4,
           },
-        }}>
+        }}
+      >
         <Tabs.Screen
           name="astrology"
           options={{
             title: 'Daily',
-            tabBarIcon: ({ size, color }) => (
+            tabBarIcon: ({ size, color }: { size: number; color: string }) => (
               <Ionicons name="star" size={size} color={color} />
             ),
           }}
@@ -38,7 +39,7 @@ export default function TabLayout() {
           name="monthly"
           options={{
             title: 'Monthly',
-            tabBarIcon: ({ size, color }) => (
+            tabBarIcon: ({ size, color }: { size: number; color: string }) => (
               <Ionicons name="calendar" size={size} color={color} />
             ),
           }}
@@ -47,18 +48,21 @@ export default function TabLayout() {
           name="mystic-mish"
           options={{
             title: 'Mystic Mish',
-            tabBarIcon: ({ size, color }) => (
+            tabBarIcon: ({ size, color }: { size: number; color: string }) => (
+              // change to a valid Ionicon if "sparkles" isn't found:
               <Ionicons name="sparkles" size={size} color={color} />
+              // e.g. fallback: <Ionicons name="flash" size={size} color={color} />
             ),
           }}
         />
         <Tabs.Screen
           name="find-cusp"
           options={{
-            href: null, // Hide from tab bar
+            href: null, // hidden from tab bar
             title: 'Calculator',
-            tabBarIcon: ({ size, color }) => (
+            tabBarIcon: ({ size, color }: { size: number; color: string }) => (
               <Ionicons name="calculator" size={size} color={color} />
+              // or "calculator-outline"
             ),
           }}
         />
@@ -66,29 +70,14 @@ export default function TabLayout() {
           name="settings"
           options={{
             title: 'Settings',
-            tabBarIcon: ({ size, color }) => (
+            tabBarIcon: ({ size, color }: { size: number; color: string }) => (
               <Ionicons name="settings" size={size} color={color} />
             ),
           }}
         />
-        <Tabs.Screen
-          name="index"
-          options={{
-            href: null, // Hide from tab bar
-          }}
-        />
-        <Tabs.Screen
-          name="rising"
-          options={{
-            href: null, // Hide from tab bar
-          }}
-        />
-        <Tabs.Screen
-          name="horoscope"
-          options={{
-            href: null, // Hide from tab bar
-          }}
-        />
+        <Tabs.Screen name="index" options={{ href: null }} />
+        <Tabs.Screen name="rising" options={{ href: null }} />
+        <Tabs.Screen name="horoscope" options={{ href: null }} />
       </Tabs>
     </AuthGate>
   );

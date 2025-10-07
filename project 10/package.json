@@ -4,11 +4,13 @@
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
-    "start": "npm exec expo start",
-    "dev": "node scripts/dev-web.js",
-    "web": "npm exec expo start -- --web --offline --clear",
+    "start": "expo start --clear",
+    "web": "expo start --web --clear",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "build": "node scripts/export-web.js && node scripts/spa-fallback.js",
-    "preview": "npx serve dist -p 4173"
+    "preview": "npx serve dist -p 4173",
+    "lint": "echo \"(optional) add ESLint here\""
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.1",
