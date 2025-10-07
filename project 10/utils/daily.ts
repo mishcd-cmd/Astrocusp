@@ -1,4 +1,4 @@
-// utils/daily.ts
+// utils/daily.ts 
 'use client';
 
 import { supabase } from '@/utils/supabase';
