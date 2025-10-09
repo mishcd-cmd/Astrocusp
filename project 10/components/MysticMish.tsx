@@ -114,7 +114,7 @@ export default function MysticMish({ onRitualReveal, hemisphere }: MysticMishPro
     }
     
     // Always show Mish with the current moon wisdom message
-    let welcomeRitual = `Hey! Its a full moon on Sept. 7 and its a Lunar eclipse in some parts , so I need to prep you!- see the Mystic Mish tab`;
+    let welcomeRitual = `Spooky! Halloween is nearby and there is some prep to do before unleashing with spells!- see the Mystic Mish tab to find out`;
     
     if (isMounted.current) {
       setCurrentRitual(welcomeRitual);
@@ -260,7 +260,7 @@ export default function MysticMish({ onRitualReveal, hemisphere }: MysticMishPro
           // Keep Mish visible, just hide the ritual popup
           // setIsVisible(false);
         }
-      }, 8000); // Hide ritual after 8 seconds, but keep Mish visible
+      }, 8000); // Hide ritual after 10 seconds, but keep Mish visible
       return () => {
         clearTimeout(timer);
       };
