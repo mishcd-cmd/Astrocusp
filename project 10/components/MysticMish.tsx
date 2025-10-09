@@ -1,3 +1,4 @@
+// components/MysticMish.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -20,14 +21,14 @@ if (typeof Platform === 'undefined') {
 // ✅ Pre-import the avatar image for better type safety
 const mishAvatar = require('../assets/images/mystic-mish/headshot.png');
 
-const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+const { width: screenWidth } = Dimensions.get('window');
 
 interface MysticMishProps {
   onRitualReveal?: (ritual: string) => void;
   hemisphere: 'Northern' | 'Southern';
 }
 
-// Ritual data based on current time and moon phases
+// Ritual data (kept as-is; currently unused in the welcome line, but ready for future variants)
 const RITUALS = {
   newMoon: [
     "🌑 **New Moon Manifestation**: Write your intentions on paper, fold it three times, and place it under your pillow.",
@@ -87,35 +88,36 @@ export default function MysticMish({ onRitualReveal, hemisphere }: MysticMishPro
   const [showRitual, setShowRitual] = useState(false);
   const [moonPhase, setMoonPhase] = useState(getCurrentMoonPhase());
   const [planetaryPositions, setPlanetaryPositions] = useState<any[]>([]);
-  const [hasAccess, setHasAccess] = useState(false);
+  const [hasAccess, setHasAccess] = useState(true); // ← default to true (soft gate)
   const [imageError, setImageError] = useState(false);
-  
-  // Track component mount status
-  const isMounted = useRef(true);
-  
-  // Animation values
-  const floatAnimation = new Animated.Value(0);
-  const sparkleAnimation = new Animated.Value(0);
-  const scaleAnimation = new Animated.Value(1);
-  const wiggleAnimation = new Animated.Value(0);
 
-  // Check if it's time for a ritual
+  const isMounted = useRef(true);
+
+  // Persist Animated values across renders
+  const floatAnimation = useRef(new Animated.Value(0)).current;
+  const sparkleAnimation = useRef(new Animated.Value(0)).current;
+  const scaleAnimation = useRef(new Animated.Value(1)).current;
+  const wiggleAnimation = useRef(new Animated.Value(0)).current;
+
   const checkRitualTime = async () => {
-    const now = new Date();
-    const currentMoonPhase = getCurrentMoonPhase();
-    setMoonPhase(currentMoonPhase);
-    
+    const currentMoon = getCurrentMoonPhase();
+    setMoonPhase(currentMoon);
+
     try {
-      const positions = await getCurrentPlanetaryPositionsEnhanced();
-      setPlanetaryPositions(positions);
-    } catch (error) {
-      // Fallback to empty array if enhanced positions fail
+      // Try with hemisphere if your util supports it; fall back otherwise
+      const positions =
+        typeof getCurrentPlanetaryPositionsEnhanced === 'function'
+          ? await getCurrentPlanetaryPositionsEnhanced(hemisphere as any)
+          : [];
+      setPlanetaryPositions(Array.isArray(positions) ? positions : []);
+    } catch {
       setPlanetaryPositions([]);
     }
-    
-    // Always show Mish with the current moon wisdom message
-    let welcomeRitual = `Spooky! Halloween is nearby and there is some prep to do before unleashing with spells!- see the Mystic Mish tab to find out`;
-    
+
+    // Your current default message (kept intact)
+    const welcomeRitual =
+      'Spooky! Halloween is nearby and there is some prep to do before unleashing with spells!- see the Mystic Mish tab to find out';
+
     if (isMounted.current) {
       setCurrentRitual(welcomeRitual);
       setIsVisible(true);
@@ -123,151 +125,99 @@ export default function MysticMish({ onRitualReveal, hemisphere }: MysticMishPro
     }
   };
 
-  // Start all animations
   const startAnimations = () => {
-    // Skip complex animations on iOS for better performance
-    if (Platform.OS === 'ios') {
-      return;
-    }
+    // Keep iOS light for perf
+    if (Platform.OS === 'ios') return;
 
-    // Floating animation
+    // Floating
     Animated.loop(
       Animated.sequence([
-        Animated.timing(floatAnimation, {
-          toValue: 1,
-          duration: 3000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(floatAnimation, {
-          toValue: 0,
-          duration: 3000,
-          useNativeDriver: true,
-        }),
+        Animated.timing(floatAnimation, { toValue: 1, duration: 3000, useNativeDriver: true }),
+        Animated.timing(floatAnimation, { toValue: 0, duration: 3000, useNativeDriver: true }),
       ])
     ).start();
 
-    // Sparkle animation
+    // Sparkle pulse/rotate
     Animated.loop(
-      Animated.timing(sparkleAnimation, {
-        toValue: 1,
-        duration: 2000,
-        useNativeDriver: true,
-      })
+      Animated.timing(sparkleAnimation, { toValue: 1, duration: 2000, useNativeDriver: true })
     ).start();
 
-    // Gentle wiggle animation
+    // Gentle wiggle
     Animated.loop(
       Animated.sequence([
-        Animated.timing(wiggleAnimation, {
-          toValue: 1,
-          duration: 4000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(wiggleAnimation, {
-          toValue: -1,
-          duration: 4000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(wiggleAnimation, {
-          toValue: 0,
-          duration: 4000,
-          useNativeDriver: true,
-        }),
+        Animated.timing(wiggleAnimation, { toValue: 1, duration: 4000, useNativeDriver: true }),
+        Animated.timing(wiggleAnimation, { toValue: -1, duration: 4000, useNativeDriver: true }),
+        Animated.timing(wiggleAnimation, { toValue: 0, duration: 4000, useNativeDriver: true }),
       ])
     ).start();
   };
 
-  // Handle Mish tap
   const handleMishTap = () => {
-    if (!isAnimating) {
+    if (isAnimating) return;
+
+    if (isMounted.current) setIsAnimating(true);
+
+    Animated.sequence([
+      Animated.timing(scaleAnimation, { toValue: 1.15, duration: 200, useNativeDriver: true }),
+      Animated.timing(scaleAnimation, { toValue: 1, duration: 200, useNativeDriver: true }),
+    ]).start(() => {
       if (isMounted.current) {
-        setIsAnimating(true);
+        setIsAnimating(false);
+        setShowRitual(true);
+        onRitualReveal?.(currentRitual);
       }
-      
-      // Bounce animation
-      Animated.sequence([
-        Animated.timing(scaleAnimation, {
-          toValue: 1.15,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-        Animated.timing(scaleAnimation, {
-          toValue: 1,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]).start(() => {
-        if (isMounted.current) {
-          setIsAnimating(false);
-          setShowRitual(true);
-          onRitualReveal?.(currentRitual);
-        }
-      });
-    }
+    });
   };
 
-  // Check for ritual times periodically
   useEffect(() => {
     isMounted.current = true;
-    checkAccess();
-    
-    // iPhone 8 check: iOS 11+ (iPhone 8 runs iOS 11-16)
-    const isOldDevice = Platform.OS === 'ios' && Platform.Version < 13;
-    
-    if (Platform.OS === 'web' || !isOldDevice) {
-      const timer = setTimeout(async () => {
+
+    // Soft subscription check (does NOT gate rendering)
+    const checkAccess = async () => {
+      try {
+        const { getSubscriptionStatus } = await import('@/utils/billing');
+        const subscriptionStatus = await getSubscriptionStatus();
+        console.log('🔍 [MysticMish] Subscription check:', subscriptionStatus);
         if (isMounted.current) {
-          await checkRitualTime();
+          // allow if active is true OR undefined
+          const allowed = subscriptionStatus?.active !== false;
+          setHasAccess(allowed);
         }
-      }, isOldDevice ? 3000 : 2000); // Longer delay for older devices
-      
-      return () => {
-        isMounted.current = false;
-        clearTimeout(timer);
-      };
-    } else {
-      console.log('🔍 [MysticMish] Skipping on very old iOS device for performance');
-    }
-    
+      } catch (error) {
+        console.error('❌ [MysticMish] Access check error:', error);
+        if (isMounted.current) setHasAccess(true); // fail-open to keep Mish visible
+      }
+    };
+
+    checkAccess();
+
+    const isOldDevice = Platform.OS === 'ios' && (Number(Platform.Version) || 0) < 13;
+    const delay = isOldDevice ? 3000 : 2000;
+
+    const timer = setTimeout(async () => {
+      if (isMounted.current) {
+        await checkRitualTime();
+      }
+    }, delay);
+
     return () => {
       isMounted.current = false;
+      clearTimeout(timer);
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hemisphere]);
 
-  const checkAccess = async () => {
-    try {
-      const { getSubscriptionStatus } = await import('@/utils/billing');
-      const subscriptionStatus = await getSubscriptionStatus();
-      console.log('🔍 [MysticMish] Subscription check:', subscriptionStatus);
-      
-      if (isMounted.current) {
-        setHasAccess(subscriptionStatus.active);
-      }
-    } catch (error) {
-      console.error('❌ [MysticMish] Access check error:', error);
-      if (isMounted.current) {
-        setHasAccess(false);
-      }
-    }
-  };
-
-  // Auto-hide after showing ritual
+  // Auto-hide ritual popup after a while (keeps avatar visible)
   useEffect(() => {
-    if (showRitual) {
-      const timer = setTimeout(() => {
-        if (isMounted.current) {
-          setShowRitual(false);
-          // Keep Mish visible, just hide the ritual popup
-          // setIsVisible(false);
-        }
-      }, 8000); // Hide ritual after 10 seconds, but keep Mish visible
-      return () => {
-        clearTimeout(timer);
-      };
-    }
+    if (!showRitual) return;
+    const timer = setTimeout(() => {
+      if (isMounted.current) setShowRitual(false);
+    }, 8000);
+    return () => clearTimeout(timer);
   }, [showRitual]);
 
-  if (!isVisible || !hasAccess) return null;
+  // 🔑 IMPORTANT: we no longer gate on hasAccess here
+  if (!isVisible) return null;
 
   const floatTransform = floatAnimation.interpolate({
     inputRange: [0, 1],
@@ -289,33 +239,28 @@ export default function MysticMish({ onRitualReveal, hemisphere }: MysticMishPro
     outputRange: ['-1.5deg', '0deg', '1.5deg'],
   });
 
-  // Use simpler transforms on iOS
   const getTransforms = () => {
     if (Platform.OS === 'ios') {
       return [{ scale: scaleAnimation }];
     }
-    return [
-      { translateY: floatTransform },
-      { scale: scaleAnimation },
-      { rotate: wiggleRotate },
-    ];
+    return [{ translateY: floatTransform }, { scale: scaleAnimation }, { rotate: wiggleRotate }];
   };
+
   return (
-    <View style={styles.container}>
+    <View style={styles.container} pointerEvents="box-none">
       {/* Ritual popup */}
       {showRitual && (
-        <View style={styles.ritualPopup}>
+        <View style={styles.ritualPopup} pointerEvents="box-none">
           <LinearGradient
             colors={['rgba(139, 157, 195, 0.98)', 'rgba(75, 0, 130, 0.95)']}
             style={styles.ritualCard}
           >
             <Text style={styles.ritualTitle}>✨ Mystic Mish Says ✨</Text>
-            <Text style={styles.moonPhaseText}>Current Moon: {moonPhase.phase} ({moonPhase.illumination}%)</Text>
+            <Text style={styles.moonPhaseText}>
+              Current Moon: {moonPhase.phase} ({moonPhase.illumination}%)
+            </Text>
             <Text style={styles.ritualText}>{currentRitual}</Text>
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={() => setShowRitual(false)}
-            >
+            <TouchableOpacity style={styles.closeButton} onPress={() => setShowRitual(false)}>
               <Text style={styles.closeButtonText}>Thank you, Mish! 🌟</Text>
             </TouchableOpacity>
           </LinearGradient>
@@ -323,62 +268,43 @@ export default function MysticMish({ onRitualReveal, hemisphere }: MysticMishPro
       )}
 
       {/* Mystic Mish character */}
-      <Animated.View
-        style={[
-          styles.mishContainer,
-          {
-            transform: getTransforms(),
-          },
-        ]}
-      >
-        <TouchableOpacity onPress={handleMishTap} style={styles.mishTouchable}>
-          {/* Simplified sparkles for iOS */}
+      <Animated.View style={[styles.mishContainer, { transform: getTransforms() }]}>
+        <TouchableOpacity onPress={handleMishTap} style={styles.mishTouchable} activeOpacity={0.8}>
+          {/* Sparkles (skip for iOS to avoid native driver warnings) */}
           {Platform.OS !== 'ios' && (
             <>
-              <Animated.View 
+              <Animated.View
                 style={[
-                  styles.sparkle, 
-                  styles.sparkle1, 
-                  { 
-                    opacity: sparkleOpacity,
-                    transform: [{ rotate: sparkleRotate }]
-                  }
+                  styles.sparkle,
+                  styles.sparkle1,
+                  { opacity: sparkleOpacity, transform: [{ rotate: sparkleRotate }] },
                 ]}
               >
                 <Text style={styles.sparkleText}>✨</Text>
               </Animated.View>
-              <Animated.View 
+              <Animated.View
                 style={[
-                  styles.sparkle, 
-                  styles.sparkle2, 
-                  { 
-                    opacity: sparkleOpacity,
-                    transform: [{ rotate: sparkleRotate }]
-                  }
+                  styles.sparkle,
+                  styles.sparkle2,
+                  { opacity: sparkleOpacity, transform: [{ rotate: sparkleRotate }] },
                 ]}
               >
                 <Text style={styles.sparkleText}>🌟</Text>
               </Animated.View>
-              <Animated.View 
+              <Animated.View
                 style={[
-                  styles.sparkle, 
-                  styles.sparkle3, 
-                  { 
-                    opacity: sparkleOpacity,
-                    transform: [{ rotate: sparkleRotate }]
-                  }
+                  styles.sparkle,
+                  styles.sparkle3,
+                  { opacity: sparkleOpacity, transform: [{ rotate: sparkleRotate }] },
                 ]}
               >
                 <Text style={styles.sparkleText}>⭐</Text>
               </Animated.View>
-              <Animated.View 
+              <Animated.View
                 style={[
-                  styles.sparkle, 
-                  styles.sparkle4, 
-                  { 
-                    opacity: sparkleOpacity,
-                    transform: [{ rotate: sparkleRotate }]
-                  }
+                  styles.sparkle,
+                  styles.sparkle4,
+                  { opacity: sparkleOpacity, transform: [{ rotate: sparkleRotate }] },
                 ]}
               >
                 <Text style={styles.sparkleText}>💫</Text>
@@ -386,7 +312,7 @@ export default function MysticMish({ onRitualReveal, hemisphere }: MysticMishPro
             </>
           )}
 
-          {/* Mystic Mish Image */}
+          {/* Avatar */}
           <View style={styles.imageContainer}>
             {!imageError ? (
               <Image
@@ -401,12 +327,10 @@ export default function MysticMish({ onRitualReveal, hemisphere }: MysticMishPro
                 <Text style={styles.mishName}>Mish</Text>
               </View>
             )}
-            
-            {/* Magical glow effect */}
             {Platform.OS !== 'ios' && <View style={styles.glowEffect} />}
           </View>
 
-          {/* Speech bubble indicator */}
+          {/* Little “!” bubble */}
           <View style={styles.speechBubble}>
             <Text style={styles.speechText}>!</Text>
           </View>
@@ -419,10 +343,10 @@ export default function MysticMish({ onRitualReveal, hemisphere }: MysticMishPro
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    top: 120, // Position near "Daily Horoscope" title
+    top: 120, // near the Daily title
     left: 15,
     zIndex: 1000,
-    pointerEvents: 'box-none', // Allow touches to pass through to content behind
+    pointerEvents: 'box-none',
   },
   mishContainer: {
     position: 'relative',
@@ -430,18 +354,16 @@ const styles = StyleSheet.create({
   mishTouchable: {
     position: 'relative',
     padding: 8,
-    pointerEvents: 'auto', // Enable touches on Mish herself
+    pointerEvents: 'auto',
   },
   imageContainer: {
     position: 'relative',
-    width: 85, // Slightly smaller to not interfere with content
+    width: 85,
     height: 100,
     borderRadius: 18,
     overflow: 'hidden',
     ...Platform.select({
-      web: {
-        boxShadow: '0 0 12px rgba(255, 215, 0, 0.6)',
-      },
+      web: { boxShadow: '0 0 12px rgba(255, 215, 0, 0.6)' },
       ios: {},
       default: {
         shadowColor: '#FFD700',
@@ -466,10 +388,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#FFD700',
   },
-  mishEmoji: {
-    fontSize: 32,
-    marginBottom: 4,
-  },
+  mishEmoji: { fontSize: 32, marginBottom: 4 },
   mishName: {
     fontSize: 12,
     fontFamily: 'Inter-SemiBold',
@@ -478,16 +397,11 @@ const styles = StyleSheet.create({
   },
   glowEffect: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    inset: 0,
     borderRadius: 18,
     backgroundColor: 'rgba(255, 215, 0, 0.08)',
     ...Platform.select({
-      web: {
-        boxShadow: '0 0 15px rgba(255, 215, 0, 0.4)',
-      },
+      web: { boxShadow: '0 0 15px rgba(255, 215, 0, 0.4)' },
       ios: {},
       default: {
         shadowColor: '#FFD700',
@@ -497,33 +411,16 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  sparkle: {
-    position: 'absolute',
-    zIndex: 1,
-  },
-  sparkle1: {
-    top: 2,
-    left: 12,
-  },
-  sparkle2: {
-    top: 18,
-    right: 8,
-  },
-  sparkle3: {
-    bottom: 15,
-    left: 8,
-  },
-  sparkle4: {
-    top: 35,
-    right: 20,
-  },
+  sparkle: { position: 'absolute', zIndex: 1 },
+  sparkle1: { top: 2, left: 12 },
+  sparkle2: { top: 18, right: 8 },
+  sparkle3: { bottom: 15, left: 8 },
+  sparkle4: { top: 35, right: 20 },
   sparkleText: {
     fontSize: 12,
     color: '#FFD700',
     ...Platform.select({
-      web: {
-        textShadow: '0 0 2px rgba(255, 255, 255, 1)',
-      },
+      web: { textShadow: '0 0 2px rgba(255, 255, 255, 1)' },
       ios: {},
       default: {
         textShadowColor: 'rgba(255, 255, 255, 1)',
@@ -545,9 +442,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#ffffff',
     ...Platform.select({
-      web: {
-        boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
-      },
+      web: { boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)' },
       ios: {},
       default: {
         shadowColor: '#FFD700',
@@ -557,15 +452,12 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  speechText: {
-    color: '#4B0082',
-    fontSize: 12,
-    fontFamily: 'Inter-Bold',
-  },
+  speechText: { color: '#4B0082', fontSize: 12, fontFamily: 'Inter-Bold' },
+
   ritualPopup: {
     position: 'absolute',
     top: 0,
-    left: 95, // Position to the right of Mish
+    left: 95,
     width: Math.min(screenWidth - 130, 280),
     zIndex: 1001,
   },
@@ -575,9 +467,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#FFD700',
     ...Platform.select({
-      web: {
-        boxShadow: '0 0 12px rgba(255, 215, 0, 0.6)',
-      },
+      web: { boxShadow: '0 0 12px rgba(255, 215, 0, 0.6)' },
       ios: {},
       default: {
         shadowColor: '#FFD700',
@@ -594,9 +484,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 10,
     ...Platform.select({
-      web: {
-        textShadow: '1px 1px 2px #4B0082',
-      },
+      web: { textShadow: '1px 1px 2px #4B0082' },
       ios: {},
       default: {
         textShadowColor: '#4B0082',
