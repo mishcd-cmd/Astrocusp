@@ -1,35 +1,33 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import React from 'react';
 
-function App() {
-  const [count, setCount] = useState(0)
-
+export default function App() {
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
-}
+    <div style={{
+      fontFamily: 'system-ui, sans-serif',
+      padding: '2rem',
+      lineHeight: 1.4
+    }}>
+      <h1>✨ Astrocusp</h1>
+      <p>If you can see this, the React app is mounted and ES modules are working.</p>
 
-export default App
+      <pre style={{
+        background: '#111',
+        color: '#0f0',
+        padding: '1rem',
+        borderRadius: '8px',
+        overflowX: 'auto'
+      }}>
+{JSON.stringify({
+  mode: (import.meta?.env && import.meta.env.MODE) || 'unknown',
+  base:  (import.meta?.env && import.meta.env.BASE_URL) || 'unknown',
+  isModule: typeof import.meta
+}, null, 2)}
+      </pre>
+
+      <p>
+        If you still get “Cannot use <code>import.meta</code> outside a module”, it means the
+        <code>&lt;script type="module" src="/src/main.jsx"&gt;</code> is not being served or the path is wrong.
+      </p>
+    </div>
+  );
+}

@@ -2,31 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="
-        default-src 'self';
-        script-src 'self' 'unsafe-inline' 'unsafe-eval';
-        style-src 'self' 'unsafe-inline';
-        img-src 'self' data: https://apod.nasa.gov https://*.nasa.gov;
-        connect-src 'self' https://api.stripe.com https://*.supabase.co https://translation.googleapis.com https://api.nasa.gov https://ingesteer.services-prod.nsvcs.net;
-        font-src 'self' data:;
-        frame-src 'self' https://www.youtube.com https://player.vimeo.com;
-      "
-    />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Astrocusp</title>
   </head>
   <body>
     <div id="root"></div>
-
-    <!-- DEV (vite dev server) -->
-    <!-- When running `npm run dev`, Vite injects /src/main.tsx via module -->
-    <script type="module" src="/src/main.tsx"></script>
-
-    <!-- PROD (vite build) -->
-    <!-- When deployed, your static host serves /assets/* built by Vite.
-         Vite rewrites the HTML during `vite build` to point at the hashed bundles.
-         Leave this as-is; Vite will replace it. -->
+    <!-- IMPORTANT: type="module" and the path must exist -->
+    <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
