@@ -1,48 +1,32 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover"
-    />
-    <title>Astrocusp</title>
-
-    <!-- Optional: minimal favicon (remove if you don't have it) -->
-    <link rel="icon" href="/vite.svg" type="image/svg+xml" />
-
-    <!-- Optional but recommended: strict CSP for your use-cases.
-         If your host sets CSP headers, those will override this meta. -->
+    <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
       content="
         default-src 'self';
         script-src 'self' 'unsafe-inline' 'unsafe-eval';
         style-src 'self' 'unsafe-inline';
-        img-src 'self' data: https:;
-        font-src 'self' https:;
-        connect-src 'self'
-          https://*.supabase.co
-          https://api.stripe.com
-          https://api.nasa.gov
-          https://theskylive.com
-          ws: wss:;
-        object-src 'none';
-        base-uri 'self';
-        form-action 'self';
-        frame-ancestors 'self';
-        upgrade-insecure-requests;
+        img-src 'self' data: https://apod.nasa.gov https://*.nasa.gov;
+        connect-src 'self' https://api.stripe.com https://*.supabase.co https://translation.googleapis.com https://api.nasa.gov https://ingesteer.services-prod.nsvcs.net;
+        font-src 'self' data:;
+        frame-src 'self' https://www.youtube.com https://player.vimeo.com;
       "
     />
-    <!-- Note: We intentionally do NOT allow the RUM endpoint that was causing CSP errors. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Astrocusp</title>
   </head>
-
   <body>
     <div id="root"></div>
 
-    <!-- IMPORTANT: keep type="module". If your entry is TypeScript, switch to /src/main.tsx -->
-    <script type="module" src="/src/main.jsx"></script>
-    <!-- <script type="module" src="/src/main.tsx"></script> -->
-    <noscript>You need JavaScript enabled to run this app.</noscript>
+    <!-- DEV (vite dev server) -->
+    <!-- When running `npm run dev`, Vite injects /src/main.tsx via module -->
+    <script type="module" src="/src/main.tsx"></script>
+
+    <!-- PROD (vite build) -->
+    <!-- When deployed, your static host serves /assets/* built by Vite.
+         Vite rewrites the HTML during `vite build` to point at the hashed bundles.
+         Leave this as-is; Vite will replace it. -->
   </body>
 </html>
