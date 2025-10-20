@@ -10,10 +10,10 @@ export type HemiAny = HemiShort | 'Northern' | 'Southern';
 export type DailyRow = {
   sign: string;
   hemisphere: 'Northern' | 'Southern';
-  date: string;               // ideally "YYYY-MM-DD" or ISO if timestamp
-  daily_horoscope?: string;
-  affirmation?: string;
-  deeper_insight?: string;
+  date: string;               // "YYYY-MM-DD" (DATE) or ISO if TIMESTAMP exists
+  daily_horoscope?: string;   // Today's Guidance
+  affirmation?: string;       // Daily affirmation
+  deeper_insight?: string;    // Daily Astral Plane
   __source_table__?: 'horoscope_cache';
   [key: string]: any;
 };
@@ -58,15 +58,22 @@ function normalizeSignForDaily(input: string): {
   return { primaryWithCusp, primaryNoCusp, parts, isCusp };
 }
 
-/** Compare DB sign vs an attempt, tolerant to hyphen vs en-dash and "Cusp" suffix. */
+/**
+ * Compare DB sign vs requested sign, tolerant to:
+ * - "Cusp" suffix present/absent
+ * - em/en-dash vs hyphen
+ * - spaces vs hyphens (e.g., "Aries Taurus Cusp" vs "Aries–Taurus Cusp")
+ */
 function rowMatchesSign(dbSign: string, attempt: string) {
   if (!dbSign || !attempt) return false;
   const norm = (s: string) =>
     s
       .trim()
       .replace(/\s+/g, ' ')
-      .replace(/[—–]/g, '-')         // normalize dashes to hyphen
       .replace(/\s*cusp\s*$/i, '')   // strip "Cusp"
+      .replace(/[—–]/g, '-')         // unify long dashes
+      .replace(/\s*-\s*/g, '-')      // tidy " - "
+      .replace(/\s+/g, '-')          // **NEW**: convert remaining spaces to hyphen
       .toLowerCase();
 
   return norm(dbSign) === norm(attempt);
@@ -100,7 +107,6 @@ function pad2(n: number) {
 
 /**
  * Return YYYY-MM-DD for a given Date in the given IANA time zone.
- * We DO NOT parse locale strings (which causes MM/DD vs DD/MM confusion).
  */
 function ymdInTZ(d: Date, timeZone: string): string {
   const y = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric' }).format(d);
@@ -131,7 +137,10 @@ function anchorUTC(d = new Date()) {
  * Build date anchors prioritizing the USER'S LOCAL DAY in their time zone,
  * then UTC, plus ±1-day in the user TZ to cover midnight edges.
  */
-function buildDailyAnchors(d = new Date()): string[] {
+function buildDailyAnchors(d = new Date(): Date) {
+  return d;
+}
+function buildDailyAnchorsList(d = new Date()): string[] {
   const userTZ = getUserTimeZone();
 
   const todayUser = ymdInTZ(d, userTZ);
@@ -139,7 +148,7 @@ function buildDailyAnchors(d = new Date()): string[] {
   const tomorrowUser = ymdInTZ(new Date(d.getTime() + 24 * 60 * 60 * 1000), userTZ);
 
   const todayUTC = anchorUTC(d);
-  const todayLocal = anchorLocal(d); // device clock (rarely needed, but harmless)
+  const todayLocal = anchorLocal(d); // device clock
 
   const anchors = [
     todayUser,
@@ -206,9 +215,8 @@ function buildSignAttemptsForDaily(
 // ============================================================================
 
 /**
- * Fetch all rows for a given date+hemisphere, tolerant to:
- *  - hemisphere variants: "Southern"/"southern"/"SOUTHERN"/"SH"
- *  - DATE vs TIMESTAMP: queries by [date, date+1) UTC range
+ * Fetch rows for exact date+hemi. If your column is DATE, .eq('date', ymd) is perfect.
+ * If your column is TIMESTAMP, we’ll also try a [date, date+1) range.
  */
 async function fetchRowsForDate(
   date: string,
@@ -217,25 +225,46 @@ async function fetchRowsForDate(
 ): Promise<{ rows: DailyRow[]; error: any }> {
   const hemiVariants = buildHemisphereVariants(hemi);
 
-  // Date range [date, date+1) in UTC to cover DATE and TIMESTAMP columns
-  const start = `${date}T00:00:00.000Z`;
-  const end = new Date(`${date}T00:00:00.000Z`);
-  end.setUTCDate(end.getUTCDate() + 1);
-  const endIso = end.toISOString();
-
-  const { data, error } = await supabase
+  // First try exact equality (DATE column path)
+  let { data, error } = await supabase
     .from('horoscope_cache')
     .select('sign, hemisphere, date, daily_horoscope, affirmation, deeper_insight')
     .in('hemisphere', hemiVariants as any)
-    .gte('date', start)
-    .lt('date', endIso);
+    .eq('date', date);
 
   if (debug) {
-    console.log('[daily] (horoscope_cache:list tolerant)', {
-      date, start, end: endIso, hemi, hemiVariants,
+    console.log('[daily] (eq-date) attempt', {
+      date, hemi, hemiVariants,
       error: error?.message || null,
       count: Array.isArray(data) ? data.length : 0,
     });
+  }
+
+  // If no rows and no error, try timestamp range [date, date+1) (TIMESTAMP path)
+  if (!error && (!data || data.length === 0)) {
+    const start = `${date}T00:00:00.000Z`;
+    const end = new Date(`${date}T00:00:00.000Z`);
+    end.setUTCDate(end.getUTCDate() + 1);
+    const endIso = end.toISOString();
+
+    const range = await supabase
+      .from('horoscope_cache')
+      .select('sign, hemisphere, date, daily_horoscope, affirmation, deeper_insight')
+      .in('hemisphere', hemiVariants as any)
+      .gte('date', start)
+      .lt('date', endIso);
+
+    if (debug) {
+      console.log('[daily] (range-date) attempt', {
+        date, start, end: endIso, hemi, hemiVariants,
+        error: range.error?.message || null,
+        count: Array.isArray(range.data) ? range.data.length : 0,
+      });
+    }
+    if (!range.error && range.data) {
+      data = range.data;
+      error = null;
+    }
   }
 
   if (error) return { rows: [], error };
@@ -334,11 +363,27 @@ export async function getDailyForecast(
   const hemi = hemiToDB(hemisphereIn);
 
   const today = new Date();
-  const anchors = opts?.forceDate ? [opts?.forceDate] : buildDailyAnchors(today);
+  const anchors = opts?.forceDate ? [opts?.forceDate] : buildDailyAnchorsList(today);
 
   const signAttempts = buildSignAttemptsForDaily(signIn, {
     allowTrueSignFallback: !!opts?.allowTrueSignFallback,
   });
+
+  // Canary log: what can the client see (remove after debugging)
+  if (debug) {
+    try {
+      const { data, error } = await supabase
+        .from('horoscope_cache')
+        .select('date, hemisphere, sign')
+        .eq('hemisphere', hemi)
+        .gte('date', '2025-10-01')
+        .lte('date', '2025-10-31')
+        .limit(3);
+      console.log('[canary] visible rows in Oct:', data?.length ?? 0, data, 'error:', error ?? null);
+    } catch (e) {
+      console.log('[canary] threw:', e);
+    }
+  }
 
   if (debug) {
     console.log('[daily] attempts', {
@@ -469,7 +514,7 @@ export const DailyHelpers = {
   anchorLocal,
   anchorUTC,
   ymdInTZ,
-  buildDailyAnchors,
+  buildDailyAnchors: buildDailyAnchorsList,
   buildSignAttemptsForDaily,
   cacheKeyDaily,
 };
