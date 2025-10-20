@@ -9,6 +9,8 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "utils"]
+  "include": ["src", "utils"],
+  "exclude": ["app", "_app_disabled", "expo-env.d.ts"]
 }
+
 
