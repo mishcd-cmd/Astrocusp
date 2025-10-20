@@ -73,7 +73,7 @@ function rowMatchesSign(dbSign: string, attempt: string) {
       .replace(/\s*cusp\s*$/i, '')   // strip "Cusp"
       .replace(/[—–]/g, '-')         // unify long dashes
       .replace(/\s*-\s*/g, '-')      // tidy " - "
-      .replace(/\s+/g, '-')          // **NEW**: convert remaining spaces to hyphen
+      .replace(/\s+/g, '-')          // convert remaining spaces to hyphen
       .toLowerCase();
 
   return norm(dbSign) === norm(attempt);
@@ -105,9 +105,7 @@ function pad2(n: number) {
   return `${n}`.padStart(2, '0');
 }
 
-/**
- * Return YYYY-MM-DD for a given Date in the given IANA time zone.
- */
+/** Return YYYY-MM-DD for a given Date in the given IANA time zone. */
 function ymdInTZ(d: Date, timeZone: string): string {
   const y = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric' }).format(d);
   const m = new Intl.DateTimeFormat('en-US', { timeZone, month: '2-digit' }).format(d);
@@ -126,10 +124,10 @@ function getUserTimeZone(): string {
 }
 
 // Legacy helpers (still used in logs/fallbacks)
-function anchorLocal(d = new Date()) {
+function anchorLocal(d: Date = new Date()) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
-function anchorUTC(d = new Date()) {
+function anchorUTC(d: Date = new Date()) {
   return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
 }
 
@@ -137,10 +135,7 @@ function anchorUTC(d = new Date()) {
  * Build date anchors prioritizing the USER'S LOCAL DAY in their time zone,
  * then UTC, plus ±1-day in the user TZ to cover midnight edges.
  */
-function buildDailyAnchors(d = new Date(): Date) {
-  return d;
-}
-function buildDailyAnchorsList(d = new Date()): string[] {
+function buildDailyAnchorsList(d: Date = new Date()): string[] {
   const userTZ = getUserTimeZone();
 
   const todayUser = ymdInTZ(d, userTZ);
